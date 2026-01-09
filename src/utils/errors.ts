@@ -1,4 +1,4 @@
-"use client";
+
 
 /**
  * Common error patterns and their user-friendly translations.

@@ -1,4 +1,21 @@
 import { defineConfig } from "tsup";
+import { readFileSync, writeFileSync } from "fs";
+import { resolve } from "path";
+
+const addUseClient = () => {
+  const files = ["dist/index.js", "dist/index.mjs"];
+  files.forEach((file) => {
+    const filePath = resolve(file);
+    try {
+      const content = readFileSync(filePath, "utf-8");
+      if (!content.startsWith('"use client"')) {
+        writeFileSync(filePath, `"use client";\n${content}`);
+      }
+    } catch {
+      // File may not exist yet
+    }
+  });
+};
 
 export default defineConfig({
   entry: ["src/index.ts"],
@@ -10,9 +27,8 @@ export default defineConfig({
   treeshake: true,
   minify: false,
   external: ["react", "react-dom"],
-  esbuildOptions(options) {
-    options.banner = {
-      js: '"use client";',
-    };
+  onSuccess: async () => {
+    addUseClient();
+    console.log("Added 'use client' directive to output files");
   },
 });

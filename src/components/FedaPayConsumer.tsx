@@ -1,4 +1,4 @@
-"use client";
+
 
 import { useFedaPay } from "../hooks/useFedaPay";
 import type { UseFedaPayConfig } from "../hooks/useFedaPay";

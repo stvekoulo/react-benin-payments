@@ -1,4 +1,4 @@
-"use client";
+
 
 import { useKkiaPay } from "../hooks/useKkiaPay";
 import type { UseKkiaPayConfig } from "../hooks/useKkiaPay";

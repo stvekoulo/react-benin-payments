@@ -1,4 +1,4 @@
-"use client";
+
 
 import { useFedaPay, type UseFedaPayConfig, type UseFedaPayOptions } from "./useFedaPay";
 import { useKkiaPay, type UseKkiaPayConfig } from "./useKkiaPay";
