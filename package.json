@@ -34,7 +34,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "!example"
   ],
   "sideEffects": false,
   "scripts": {

@@ -300,10 +300,9 @@ export interface PaymentError {
 declare global {
   interface Window {
     FedaPay?: {
-      init: (
-        container: string,
-        options: FedaPayWidgetConfig
-      ) => FedaPayCheckoutInstance;
+      init: (options: FedaPayWidgetConfig) => FedaPayCheckoutInstance;
+      CHECKOUT_COMPLETED?: number;
+      DIALOG_DISMISSED?: number;
     };
     openKkiapayWidget?: (config: KkiaPayConfig) => void;
     addKkiapayListener?: <T = unknown>(
@@ -313,3 +312,4 @@ declare global {
     removeKkiapayListener?: (event: KkiaPayEventType) => void;
   }
 }
+

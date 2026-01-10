@@ -269,19 +269,21 @@ export function useFedaPay(
         },
       };
 
-      const checkout = window.FedaPay.init("#fedapay-checkout-container", {
+      const widget = window.FedaPay.init({
         public_key: resolvedPublicKey,
         transaction: transactionWithMetadata,
         customer: config.customer,
         currency: { iso: resolvedCurrency },
-        onComplete: handlePaymentSuccess,
+        onComplete: (response: FedaPayCallbackResponse) => {
+          handlePaymentSuccess(response);
+        },
         onClose: () => {
           log.info("Payment dialog closed by user");
           config.onClose?.();
         },
       });
 
-      checkout.open();
+      widget.open();
       log.success("FedaPay dialog opened successfully");
     } catch (err) {
       log.error("Failed to open FedaPay dialog", err);
