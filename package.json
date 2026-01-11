@@ -1,6 +1,6 @@
 {
   "name": "react-benin-payments",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "React hooks and components wrapper for Benin payment gateways (FedaPay, KKiaPay)",
   "author": "Steven Koulo",
   "license": "MIT",
