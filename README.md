@@ -10,6 +10,8 @@
 
 Gère automatiquement le chargement des scripts, les modales de paiement et la vérification backend.
 
+**[Documentation complète](./DOCUMENTATION.md)** | [Exemple d'application](./example)
+
 ---
 
 ## Fonctionnalités
