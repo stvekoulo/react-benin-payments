@@ -10,7 +10,7 @@
 
 Gère automatiquement le chargement des scripts, les modales de paiement et la vérification backend.
 
-**[Documentation complète](./DOCUMENTATION.md)** | [Exemple d'application](./example)
+**[Documentation complète](./docs/DOCUMENTATION.md)** | [Exemple d'application](./example)
 
 ---
 
@@ -24,6 +24,21 @@ Gère automatiquement le chargement des scripts, les modales de paiement et la v
 - **Mock Mode** — Simulez des paiements en développement
 - **Hook Universel** — `useBeninPay` pour changer de provider dynamiquement
 - **Messages d'erreur localisés** — UX optimisée pour les utilisateurs francophones
+
+## Documentation
+
+Guide complet disponible dans le dossier [`docs`](./docs/DOCUMENTATION.md) :
+
+1. [Introduction](./docs/01-introduction.md)
+2. [Installation](./docs/02-installation.md)
+3. [Configuration](./docs/03-configuration.md)
+4. [Utilisation de base](./docs/04-basic-usage.md)
+5. [Utilisation avancée](./docs/05-advanced-usage.md)
+6. [Référence API](./docs/06-api-reference.md)
+7. [Utilitaires](./docs/07-utilities.md)
+8. [Gestion des erreurs](./docs/08-error-handling.md)
+9. [Mode Test](./docs/09-test-mode.md)
+10. [FAQ](./docs/10-faq.md)
 
 ---
 
