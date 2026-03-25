@@ -17,18 +17,31 @@ const addUseClient = () => {
   });
 };
 
-export default defineConfig({
-  entry: ["src/index.ts"],
-  format: ["cjs", "esm"],
-  dts: true,
-  splitting: false,
-  sourcemap: true,
-  clean: true,
-  treeshake: true,
-  minify: false,
-  external: ["react", "react-dom"],
-  onSuccess: async () => {
-    addUseClient();
-    console.log("Added 'use client' directive to output files");
+export default defineConfig([
+  {
+    entry: ["src/index.ts"],
+    format: ["cjs", "esm"],
+    dts: true,
+    splitting: false,
+    sourcemap: true,
+    clean: true,
+    treeshake: true,
+    minify: false,
+    external: ["react", "react-dom"],
+    onSuccess: async () => {
+      addUseClient();
+      console.log("Added 'use client' directive to output files");
+    },
   },
-});
+  {
+    entry: { "cli/init": "src/cli/init.ts" },
+    format: ["cjs"],
+    platform: "node",
+    target: "node18",
+    dts: false,
+    sourcemap: false,
+    clean: false,
+    minify: false,
+    banner: { js: "#!/usr/bin/env node" },
+  },
+]);

@@ -78,6 +78,7 @@ export const KkiaPayButton = forwardRef<HTMLButtonElement, KkiaPayButtonProps>(
         ref={ref}
         type="button"
         disabled={isDisabled}
+        aria-busy={loading || isVerifying}
         onClick={handleClick}
         style={{ cursor: isDisabled ? "not-allowed" : "pointer", ...style }}
         {...props}

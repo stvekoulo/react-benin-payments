@@ -62,6 +62,7 @@ export const FedaPayButton = forwardRef<HTMLButtonElement, FedaPayButtonProps>(
         ref={ref}
         type="button"
         disabled={isDisabled}
+        aria-busy={loading || isVerifying}
         onClick={handleClick}
         style={{ cursor: isDisabled ? "not-allowed" : "pointer", ...style }}
         {...props}

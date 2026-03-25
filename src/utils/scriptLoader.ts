@@ -15,6 +15,11 @@
  * ```
  */
 export function loadScript(src: string, id: string): Promise<boolean> {
+  // Guard for SSR environments (Next.js server components, Node.js)
+  if (typeof document === "undefined") {
+    return Promise.resolve(false);
+  }
+
   return new Promise((resolve, reject) => {
     const existingScript = document.getElementById(id) as HTMLScriptElement | null;
 

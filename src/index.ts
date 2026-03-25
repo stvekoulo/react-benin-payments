@@ -15,6 +15,7 @@ export type {
 export { useFedaPay } from "./hooks/useFedaPay";
 export { useKkiaPay } from "./hooks/useKkiaPay";
 export { useBeninPay } from "./hooks/useBeninPay";
+export { usePaymentStatus } from "./hooks/usePaymentStatus";
 
 // Hook types
 export type {
@@ -34,6 +35,11 @@ export type {
   UseBeninPayOptions,
   UseBeninPayReturn,
 } from "./hooks/useBeninPay";
+export type {
+  TransactionStatus,
+  UsePaymentStatusOptions,
+  UsePaymentStatusReturn,
+} from "./hooks/usePaymentStatus";
 
 // Validation types
 export type {
