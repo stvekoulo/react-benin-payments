@@ -38,6 +38,7 @@
   },
   "files": [
     "dist",
+    "docs",
     "!example"
   ],
   "sideEffects": false,
