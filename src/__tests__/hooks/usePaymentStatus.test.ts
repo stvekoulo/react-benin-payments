@@ -12,9 +12,48 @@ const defaultOptions = {
   pollInterval: POLL,
 };
 
+class MockWebSocket {
+  static instances: MockWebSocket[] = [];
+
+  onopen: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  onclose: ((event: CloseEvent) => void) | null = null;
+  closed = false;
+
+  constructor(
+    public url: string,
+    public protocols?: string | string[]
+  ) {
+    MockWebSocket.instances.push(this);
+  }
+
+  emitOpen() {
+    this.onopen?.({} as Event);
+  }
+
+  emitMessage(data: unknown) {
+    this.onmessage?.({ data } as MessageEvent);
+  }
+
+  emitError() {
+    this.onerror?.({} as Event);
+  }
+
+  close() {
+    this.closed = true;
+    this.onclose?.({} as CloseEvent);
+  }
+
+  static reset() {
+    MockWebSocket.instances = [];
+  }
+}
+
 describe("usePaymentStatus", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    MockWebSocket.reset();
     // Pas de fake timers — setInterval actif bloque act() indéfiniment avec fake timers
   });
 
@@ -290,6 +329,84 @@ describe("usePaymentStatus", () => {
 
       // Arrêter pour ne pas laisser tourner le hook après le test
       act(() => result.current.stopPolling());
+    });
+  });
+
+  describe("mode websocket", () => {
+    it("s'abonne au websocket et met à jour le statut en temps réel", async () => {
+      const mockFetch = vi.fn();
+      vi.stubGlobal("fetch", mockFetch);
+
+      const { result } = renderHook(() =>
+        usePaymentStatus({
+          ...defaultOptions,
+          transport: "websocket",
+          websocketUrl: "wss://example.com/payments",
+          websocketFactory: (url, protocols) => new MockWebSocket(url, protocols),
+        })
+      );
+
+      expect(MockWebSocket.instances).toHaveLength(1);
+      expect(MockWebSocket.instances[0]?.url).toBe("wss://example.com/payments");
+      expect(mockFetch).not.toHaveBeenCalled();
+
+      act(() => {
+        MockWebSocket.instances[0]?.emitOpen();
+        MockWebSocket.instances[0]?.emitMessage(
+          JSON.stringify({ status: "approved" })
+        );
+      });
+
+      await waitFor(
+        () => {
+          expect(result.current.status).toBe("approved");
+          expect(result.current.isPolling).toBe(false);
+          expect(result.current.attempts).toBe(1);
+        },
+        { timeout: 2000 }
+      );
+    });
+
+    it("utilise parseWebSocketMessage si fourni", async () => {
+      const { result } = renderHook(() =>
+        usePaymentStatus({
+          ...defaultOptions,
+          transport: "websocket",
+          websocketUrl: "wss://example.com/payments",
+          websocketFactory: (url, protocols) => new MockWebSocket(url, protocols),
+          parseWebSocketMessage: (event) => {
+            const payload = JSON.parse(event.data as string) as { state: "declined" };
+            return payload.state;
+          },
+        })
+      );
+
+      act(() => {
+        MockWebSocket.instances[0]?.emitOpen();
+        MockWebSocket.instances[0]?.emitMessage(
+          JSON.stringify({ state: "declined" })
+        );
+      });
+
+      await waitFor(() => expect(result.current.status).toBe("declined"), {
+        timeout: 2000,
+      });
+    });
+
+    it("stopPolling ferme la connexion websocket", () => {
+      const { result } = renderHook(() =>
+        usePaymentStatus({
+          ...defaultOptions,
+          transport: "websocket",
+          websocketUrl: "wss://example.com/payments",
+          websocketFactory: (url, protocols) => new MockWebSocket(url, protocols),
+        })
+      );
+
+      act(() => result.current.stopPolling());
+
+      expect(MockWebSocket.instances[0]?.closed).toBe(true);
+      expect(result.current.isPolling).toBe(false);
     });
   });
 

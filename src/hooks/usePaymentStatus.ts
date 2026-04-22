@@ -1,3 +1,5 @@
+"use client";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createLogger } from "../utils/logger";
 import { useBeninConfig } from "../context";
@@ -18,6 +20,20 @@ const TERMINAL_STATUSES: TransactionStatus[] = [
   "cancelled",
 ];
 
+export type PaymentStatusTransport = "polling" | "websocket";
+
+export interface PaymentStatusWebSocketLike {
+  close: () => void;
+  onopen: ((event: Event) => void) | null;
+  onmessage: ((event: MessageEvent) => void) | null;
+  onerror: ((event: Event) => void) | null;
+  onclose: ((event: CloseEvent) => void) | null;
+}
+
+export interface UsePaymentStatusWebSocketMessage {
+  status?: TransactionStatus;
+}
+
 /**
  * Options for the usePaymentStatus hook.
  */
@@ -28,7 +44,7 @@ export interface UsePaymentStatusOptions {
    * Expected response: `{ status: TransactionStatus }`
    * @example "/api/payments/status"
    */
-  checkUrl: string;
+  checkUrl?: string;
   /**
    * Transaction ID returned by FedaPay or KKiaPay after payment.
    */
@@ -42,6 +58,35 @@ export interface UsePaymentStatusOptions {
    * @default 3000
    */
   pollInterval?: number;
+  /**
+   * Transport used to follow status updates.
+   * @default "polling"
+   */
+  transport?: PaymentStatusTransport;
+  /**
+   * WebSocket endpoint used when `transport` is `"websocket"`.
+   * @example "wss://api.example.com/payments/status"
+   */
+  websocketUrl?: string;
+  /**
+   * Optional WebSocket protocols.
+   */
+  websocketProtocols?: string | string[];
+  /**
+   * Optional factory used to create the WebSocket instance.
+   * Useful for tests or custom runtimes.
+   */
+  websocketFactory?: (
+    url: string,
+    protocols?: string | string[]
+  ) => PaymentStatusWebSocketLike;
+  /**
+   * Parses incoming WebSocket messages into a transaction status.
+   * By default expects either a raw status string or `{ status: ... }`.
+   */
+  parseWebSocketMessage?: (
+    event: MessageEvent
+  ) => TransactionStatus | UsePaymentStatusWebSocketMessage | null | undefined;
   /**
    * Maximum number of polling attempts before stopping.
    * Prevents infinite loops if the backend never returns a terminal status.
@@ -132,6 +177,11 @@ export function usePaymentStatus(
     transactionId,
     provider,
     pollInterval = 3000,
+    transport = "polling",
+    websocketUrl,
+    websocketProtocols,
+    websocketFactory,
+    parseWebSocketMessage,
     maxAttempts = 10,
     customHeaders,
     onStatusChange,
@@ -153,16 +203,38 @@ export function usePaymentStatus(
   const statusRef = useRef<TransactionStatus>("pending");
   const attemptsRef = useRef(0);
   const isPollingRef = useRef(enabled);
+  const webSocketRef = useRef<PaymentStatusWebSocketLike | null>(null);
 
   useEffect(() => {
     isPollingRef.current = isPolling;
   }, [isPolling]);
+
+  const applyStatus = useCallback(
+    (newStatus: TransactionStatus) => {
+      if (newStatus !== statusRef.current) {
+        statusRef.current = newStatus;
+        setStatus(newStatus);
+        log.info(`Transaction status: ${newStatus}`);
+        onStatusChange?.(newStatus);
+      }
+
+      if (TERMINAL_STATUSES.includes(newStatus)) {
+        log.success(`Terminal status reached: ${newStatus}`);
+        setIsPolling(false);
+        webSocketRef.current?.close();
+        webSocketRef.current = null;
+      }
+    },
+    [log, onStatusChange]
+  );
 
   const checkStatus = useCallback(async () => {
     if (!transactionId || !checkUrl) return;
 
     setLoading(true);
     setError(null);
+    attemptsRef.current += 1;
+    setAttempts(attemptsRef.current);
 
     try {
       const params = new URLSearchParams({ transactionId, provider });
@@ -190,22 +262,9 @@ export function usePaymentStatus(
       const data = await response.json();
       const newStatus: TransactionStatus = data.status ?? "unknown";
 
-      // Update status and fire callback only on change
-      if (newStatus !== statusRef.current) {
-        statusRef.current = newStatus;
-        setStatus(newStatus);
-        log.info(`Transaction status: ${newStatus}`);
-        onStatusChange?.(newStatus);
-      }
+      applyStatus(newStatus);
 
-      // Increment attempt counter
-      attemptsRef.current += 1;
-      setAttempts(attemptsRef.current);
-
-      // Stop polling on terminal status
       if (TERMINAL_STATUSES.includes(newStatus)) {
-        log.success(`Terminal status reached: ${newStatus}`);
-        setIsPolling(false);
         return;
       }
 
@@ -219,13 +278,100 @@ export function usePaymentStatus(
         err instanceof Error ? err : new Error("Status check failed");
       setError(checkError);
       log.error("Status check failed", checkError);
+
+      if (attemptsRef.current >= maxAttempts) {
+        log.warn(`Max polling attempts (${maxAttempts}) reached after errors`);
+        setIsPolling(false);
+      }
     } finally {
       setLoading(false);
     }
-  }, [checkUrl, transactionId, provider, customHeaders, maxAttempts, log, onStatusChange]);
+  }, [checkUrl, transactionId, provider, customHeaders, maxAttempts, log, applyStatus]);
+
+  const resolveWebSocketStatus = useCallback(
+    (event: MessageEvent): TransactionStatus | null => {
+      const parsed = parseWebSocketMessage?.(event);
+
+      if (typeof parsed === "string") {
+        return parsed;
+      }
+
+      if (parsed && typeof parsed === "object" && "status" in parsed) {
+        return parsed.status ?? null;
+      }
+
+      if (typeof event.data === "string") {
+        try {
+          const data = JSON.parse(event.data) as
+            | UsePaymentStatusWebSocketMessage
+            | TransactionStatus;
+
+          if (typeof data === "string") {
+            return data;
+          }
+
+          return data.status ?? null;
+        } catch {
+          return null;
+        }
+      }
+
+      return null;
+    },
+    [parseWebSocketMessage]
+  );
 
   useEffect(() => {
-    if (!isPolling || !transactionId || !checkUrl) return;
+    if (!isPolling || !transactionId) return;
+
+    if (transport === "websocket") {
+      if (!websocketUrl) return;
+
+      const createSocket =
+        websocketFactory ??
+        ((url: string, protocols?: string | string[]) =>
+          new WebSocket(url, protocols) as unknown as PaymentStatusWebSocketLike);
+
+      setLoading(true);
+      setError(null);
+
+      const socket = createSocket(websocketUrl, websocketProtocols);
+      webSocketRef.current = socket;
+
+      socket.onopen = () => {
+        setLoading(false);
+        log.info("WebSocket status tracking connected");
+      };
+
+      socket.onmessage = (event) => {
+        attemptsRef.current += 1;
+        setAttempts(attemptsRef.current);
+
+        const nextStatus = resolveWebSocketStatus(event);
+        if (!nextStatus) return;
+        applyStatus(nextStatus);
+      };
+
+      socket.onerror = () => {
+        setLoading(false);
+        setError(new Error("WebSocket status tracking failed"));
+        log.error("WebSocket status tracking failed");
+      };
+
+      socket.onclose = () => {
+        webSocketRef.current = null;
+        setLoading(false);
+      };
+
+      return () => {
+        socket.close();
+        if (webSocketRef.current === socket) {
+          webSocketRef.current = null;
+        }
+      };
+    }
+
+    if (!checkUrl) return;
 
     // Initial check immediately
     checkStatus();
@@ -239,10 +385,25 @@ export function usePaymentStatus(
     }, pollInterval);
 
     return () => clearInterval(intervalId);
-  }, [isPolling, transactionId, checkUrl, pollInterval, checkStatus]);
+  }, [
+    isPolling,
+    transactionId,
+    checkUrl,
+    pollInterval,
+    checkStatus,
+    transport,
+    websocketUrl,
+    websocketProtocols,
+    websocketFactory,
+    resolveWebSocketStatus,
+    applyStatus,
+    log,
+  ]);
 
   const stopPolling = useCallback(() => {
     log.info("Polling stopped manually");
+    webSocketRef.current?.close();
+    webSocketRef.current = null;
     setIsPolling(false);
   }, [log]);
 

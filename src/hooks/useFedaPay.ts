@@ -1,5 +1,7 @@
 
 
+"use client";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { loadScript } from "../utils/scriptLoader";
 import { createLogger } from "../utils/logger";
@@ -8,6 +10,10 @@ import { generateMockTransactionId } from "../utils/currency";
 import { isTestEnvironment } from "../utils/environment";
 import { verifyTransaction } from "../utils/verifyTransaction";
 import { createParsedError } from "../utils/errors";
+import {
+  createAnalyticsEmitter,
+  type BeninPaymentAnalyticsHandler,
+} from "../utils/analytics";
 import { useBeninConfig } from "../context";
 import type { FedaPayConfig, FedaPayCallbackResponse, Currency } from "../types";
 import type { PaymentValidationError } from "../types/validation";
@@ -32,6 +38,15 @@ export interface UseFedaPayOptions {
    * @default false
    */
   mock?: boolean;
+  /**
+   * Runs before opening the payment modal.
+   * Return `false` to cancel opening without throwing an error.
+   */
+  onBeforePayment?: () => void | boolean | Promise<void | boolean>;
+  /**
+   * Receives standardized analytics events for the payment lifecycle.
+   */
+  onAnalyticsEvent?: BeninPaymentAnalyticsHandler;
   /** 
    * Callback fired when validation fails or SDK errors occur.
    * @param error - The validation error with code and message
@@ -55,6 +70,8 @@ export interface UseFedaPayReturn {
   isMockMode: boolean;
   /** Whether backend verification is in progress */
   isVerifying: boolean;
+  /** Whether async pre-validation is in progress */
+  isPreparing: boolean;
 }
 
 /**
@@ -106,13 +123,22 @@ export function useFedaPay(
   
   const isMockMode = options.mock ?? isTestEnvironment();
   
-  const { onError } = options;
+  const { onError, onBeforePayment, onAnalyticsEvent } = options;
   const log = useMemo(() => createLogger(resolvedDebug), [resolvedDebug]);
+  const emitAnalytics = useMemo(
+    () =>
+      createAnalyticsEmitter(
+        [globalConfig.onAnalyticsEvent, onAnalyticsEvent],
+        log.warn
+      ),
+    [globalConfig.onAnalyticsEvent, onAnalyticsEvent, log]
+  );
 
   const [loading, setLoading] = useState(!isMockMode);
   const [error, setError] = useState<Error | null>(null);
   const [scriptLoaded, setScriptLoaded] = useState(isMockMode);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isPreparing, setIsPreparing] = useState(false);
 
   useEffect(() => {
     if (resolvedPublicKey && !isMockMode) {
@@ -135,6 +161,13 @@ export function useFedaPay(
 
     const initScript = async () => {
       log.info("Loading FedaPay SDK...");
+      emitAnalytics({
+        name: "sdk_load_started",
+        provider: "fedapay",
+        amount: config.transaction?.amount,
+        currency: resolvedCurrency,
+        mode: "live",
+      });
 
       try {
         await loadScript(FEDAPAY_SCRIPT_URL, FEDAPAY_SCRIPT_ID);
@@ -142,6 +175,13 @@ export function useFedaPay(
           setScriptLoaded(true);
           setLoading(false);
           log.success("FedaPay SDK loaded successfully");
+          emitAnalytics({
+            name: "sdk_load_succeeded",
+            provider: "fedapay",
+            amount: config.transaction?.amount,
+            currency: resolvedCurrency,
+            mode: "live",
+          });
         }
       } catch (err) {
         if (isMounted) {
@@ -149,6 +189,14 @@ export function useFedaPay(
           setError(loadError);
           setLoading(false);
           log.error("Failed to load FedaPay SDK", err);
+          emitAnalytics({
+            name: "sdk_load_failed",
+            provider: "fedapay",
+            amount: config.transaction?.amount,
+            currency: resolvedCurrency,
+            mode: "live",
+            errorMessage: loadError.message,
+          });
         }
       }
     };
@@ -158,7 +206,7 @@ export function useFedaPay(
     return () => {
       isMounted = false;
     };
-  }, [log, isMockMode]);
+  }, [log, isMockMode, emitAnalytics, config.transaction?.amount, resolvedCurrency]);
 
   const handlePaymentSuccess = useCallback(
     async (response: FedaPayCallbackResponse) => {
@@ -167,6 +215,14 @@ export function useFedaPay(
       if (config.verifyUrl) {
         setIsVerifying(true);
         log.info("🔐 Verifying transaction with backend...", { url: config.verifyUrl });
+        emitAnalytics({
+          name: "payment_verification_started",
+          provider: "fedapay",
+          amount: response.transaction.amount,
+          currency: resolvedCurrency,
+          mode: isMockMode ? "mock" : "live",
+          transactionId: response.transaction.reference,
+        });
 
         try {
           const verifyResult = await verifyTransaction(
@@ -185,117 +241,292 @@ export function useFedaPay(
 
           setIsVerifying(false);
           log.success("🔐 Backend verification successful", verifyResult);
+          emitAnalytics({
+            name: "payment_verification_succeeded",
+            provider: "fedapay",
+            amount: response.transaction.amount,
+            currency: resolvedCurrency,
+            mode: isMockMode ? "mock" : "live",
+            transactionId: response.transaction.reference,
+          });
+          emitAnalytics({
+            name: "payment_completed",
+            provider: "fedapay",
+            amount: response.transaction.amount,
+            currency: resolvedCurrency,
+            mode: isMockMode ? "mock" : "live",
+            transactionId: response.transaction.reference,
+            status: response.transaction.status,
+          });
           config.onComplete?.(response);
         } catch (err) {
           setIsVerifying(false);
           const verifyError = err instanceof Error ? err : new Error("Verification failed");
           log.error("🔐 Backend verification failed", verifyError);
+          emitAnalytics({
+            name: "payment_verification_failed",
+            provider: "fedapay",
+            amount: response.transaction.amount,
+            currency: resolvedCurrency,
+            mode: isMockMode ? "mock" : "live",
+            transactionId: response.transaction.reference,
+            errorMessage: verifyError.message,
+          });
           onError?.({
             code: "SDK_ERROR",
             message: verifyError.message,
           });
         }
       } else {
+        emitAnalytics({
+          name: "payment_completed",
+          provider: "fedapay",
+          amount: response.transaction.amount,
+          currency: resolvedCurrency,
+          mode: isMockMode ? "mock" : "live",
+          transactionId: response.transaction.reference,
+          status: response.transaction.status,
+        });
         config.onComplete?.(response);
       }
     },
-    [config, log, onError]
+    [config, log, onError, emitAnalytics, resolvedCurrency, isMockMode]
   );
 
   const openDialog = useCallback(() => {
-    log.info("Opening FedaPay dialog...", { config, isMockMode });
+    if (isPreparing) {
+      log.warn("Payment pre-validation already in progress");
+      return;
+    }
 
-    if (!isMockMode) {
-      if (!resolvedPublicKey || resolvedPublicKey.trim() === "") {
+    const run = async () => {
+      log.info("Opening FedaPay dialog...", { config, isMockMode });
+
+      if (!isMockMode) {
+        if (!resolvedPublicKey || resolvedPublicKey.trim() === "") {
+          const validationError: PaymentValidationError = {
+            code: "MISSING_PUBLIC_KEY",
+            message: "Missing Public Key. Provide it via config or BeninPaymentProvider.",
+          };
+          log.error("Validation failed: Missing Public Key.");
+          emitAnalytics({
+            name: "payment_validation_failed",
+            provider: "fedapay",
+            amount: config.transaction?.amount,
+            currency: resolvedCurrency,
+            mode: "live",
+            errorCode: validationError.code,
+            errorMessage: validationError.message,
+          });
+          onError?.(validationError);
+          return;
+        }
+      }
+
+      if (!config.transaction?.amount || config.transaction.amount <= 0) {
         const validationError: PaymentValidationError = {
-          code: "MISSING_PUBLIC_KEY",
-          message: "Missing Public Key. Provide it via config or BeninPaymentProvider.",
+          code: "INVALID_AMOUNT",
+          message: "Invalid amount. Amount must be greater than 0.",
         };
-        log.error("Validation failed: Missing Public Key.");
+        log.error("Validation failed: Invalid amount", {
+          amount: config.transaction?.amount,
+        });
+        emitAnalytics({
+          name: "payment_validation_failed",
+          provider: "fedapay",
+          amount: config.transaction?.amount,
+          currency: resolvedCurrency,
+          mode: isMockMode ? "mock" : "live",
+          errorCode: validationError.code,
+          errorMessage: validationError.message,
+        });
         onError?.(validationError);
         return;
       }
-    }
 
-    if (!config.transaction?.amount || config.transaction.amount <= 0) {
-      const validationError: PaymentValidationError = {
-        code: "INVALID_AMOUNT",
-        message: "Invalid amount. Amount must be greater than 0.",
-      };
-      log.error("Validation failed: Invalid amount", {
-        amount: config.transaction?.amount,
+      emitAnalytics({
+        name: "payment_open_attempted",
+        provider: "fedapay",
+        amount: config.transaction.amount,
+        currency: resolvedCurrency,
+        mode: isMockMode ? "mock" : "live",
       });
-      onError?.(validationError);
-      return;
-    }
 
-    if (isMockMode) {
-      log.info("🧪 Simulating payment...");
-      
-      setTimeout(() => {
-        const mockResponse: FedaPayCallbackResponse = {
-          reason: "mock_transaction_completed",
-          transaction: {
-            id: Math.floor(Math.random() * 1000000),
-            reference: generateMockTransactionId(),
+      if (onBeforePayment) {
+        try {
+          setIsPreparing(true);
+          emitAnalytics({
+            name: "payment_pre_validation_started",
+            provider: "fedapay",
             amount: config.transaction.amount,
-            status: "approved",
+            currency: resolvedCurrency,
+            mode: isMockMode ? "mock" : "live",
+          });
+          const shouldContinue = await onBeforePayment();
+          if (shouldContinue === false) {
+            log.info("Payment opening cancelled by onBeforePayment");
+            emitAnalytics({
+              name: "payment_pre_validation_cancelled",
+              provider: "fedapay",
+              amount: config.transaction.amount,
+              currency: resolvedCurrency,
+              mode: isMockMode ? "mock" : "live",
+            });
+            return;
+          }
+          emitAnalytics({
+            name: "payment_pre_validation_succeeded",
+            provider: "fedapay",
+            amount: config.transaction.amount,
+            currency: resolvedCurrency,
+            mode: isMockMode ? "mock" : "live",
+          });
+        } catch (err) {
+          const preValidationError =
+            err instanceof Error
+              ? err
+              : new Error("Payment pre-validation failed");
+          setError(preValidationError);
+          log.error("onBeforePayment failed", preValidationError);
+          emitAnalytics({
+            name: "payment_pre_validation_failed",
+            provider: "fedapay",
+            amount: config.transaction.amount,
+            currency: resolvedCurrency,
+            mode: isMockMode ? "mock" : "live",
+            errorMessage: preValidationError.message,
+          });
+          onError?.({
+            code: "PRE_VALIDATION_FAILED",
+            message: preValidationError.message,
+          });
+          return;
+        } finally {
+          setIsPreparing(false);
+        }
+      }
+
+      if (isMockMode) {
+        log.info("🧪 Simulating payment...");
+        emitAnalytics({
+          name: "payment_opened",
+          provider: "fedapay",
+          amount: config.transaction.amount,
+          currency: resolvedCurrency,
+          mode: "mock",
+        });
+
+        setTimeout(() => {
+          const mockResponse: FedaPayCallbackResponse = {
+            reason: "mock_transaction_completed",
+            transaction: {
+              id: Math.floor(Math.random() * 1000000),
+              reference: generateMockTransactionId(),
+              amount: config.transaction.amount,
+              status: "approved",
+            },
+          };
+
+          log.success("🧪 Mock Payment Successful", mockResponse);
+          handlePaymentSuccess(mockResponse);
+        }, 1000);
+
+        return;
+      }
+
+      if (!scriptLoaded || !window.FedaPay) {
+        const validationError: PaymentValidationError = {
+          code: "SDK_NOT_LOADED",
+          message: "FedaPay SDK not loaded. Please wait for the script to load.",
+        };
+        log.error("SDK not loaded. Cannot open dialog.");
+        emitAnalytics({
+          name: "payment_validation_failed",
+          provider: "fedapay",
+          amount: config.transaction.amount,
+          currency: resolvedCurrency,
+          mode: "live",
+          errorCode: validationError.code,
+          errorMessage: validationError.message,
+        });
+        onError?.(validationError);
+        return;
+      }
+
+      try {
+        const transactionWithMetadata = {
+          ...config.transaction,
+          custom_metadata: {
+            ...config.transaction.custom_metadata,
+            ...config.metadata,
           },
         };
-        
-        log.success("🧪 Mock Payment Successful", mockResponse);
-        handlePaymentSuccess(mockResponse);
-      }, 1000);
-      
-      return;
-    }
 
-    if (!scriptLoaded || !window.FedaPay) {
-      const validationError: PaymentValidationError = {
-        code: "SDK_NOT_LOADED",
-        message: "FedaPay SDK not loaded. Please wait for the script to load.",
-      };
-      log.error("SDK not loaded. Cannot open dialog.");
-      onError?.(validationError);
-      return;
-    }
+        const widget = window.FedaPay.init({
+          public_key: resolvedPublicKey,
+          transaction: transactionWithMetadata,
+          customer: config.customer,
+          currency: { iso: resolvedCurrency },
+          onComplete: (response: FedaPayCallbackResponse) => {
+            handlePaymentSuccess(response);
+          },
+          onClose: () => {
+            log.info("Payment dialog closed by user");
+            emitAnalytics({
+              name: "payment_closed",
+              provider: "fedapay",
+              amount: config.transaction.amount,
+              currency: resolvedCurrency,
+              mode: "live",
+            });
+            config.onClose?.();
+          },
+        });
 
-    try {
-      const transactionWithMetadata = {
-        ...config.transaction,
-        custom_metadata: {
-          ...config.transaction.custom_metadata,
-          ...config.metadata,
-        },
-      };
+        widget.open();
+        log.success("FedaPay dialog opened successfully");
+        emitAnalytics({
+          name: "payment_opened",
+          provider: "fedapay",
+          amount: config.transaction.amount,
+          currency: resolvedCurrency,
+          mode: "live",
+        });
+      } catch (err) {
+        log.error("Failed to open FedaPay dialog", err);
+        const sdkError =
+          err instanceof Error ? err : new Error("Failed to open FedaPay dialog");
+        setError(sdkError);
+        emitAnalytics({
+          name: "payment_failed",
+          provider: "fedapay",
+          amount: config.transaction.amount,
+          currency: resolvedCurrency,
+          mode: "live",
+          errorCode: "SDK_ERROR",
+          errorMessage: sdkError.message,
+        });
+        onError?.({
+          code: "SDK_ERROR",
+          message: sdkError.message,
+        });
+      }
+    };
 
-      const widget = window.FedaPay.init({
-        public_key: resolvedPublicKey,
-        transaction: transactionWithMetadata,
-        customer: config.customer,
-        currency: { iso: resolvedCurrency },
-        onComplete: (response: FedaPayCallbackResponse) => {
-          handlePaymentSuccess(response);
-        },
-        onClose: () => {
-          log.info("Payment dialog closed by user");
-          config.onClose?.();
-        },
-      });
-
-      widget.open();
-      log.success("FedaPay dialog opened successfully");
-    } catch (err) {
-      log.error("Failed to open FedaPay dialog", err);
-      const sdkError =
-        err instanceof Error ? err : new Error("Failed to open FedaPay dialog");
-      setError(sdkError);
-      onError?.({
-        code: "SDK_ERROR",
-        message: sdkError.message,
-      });
-    }
-  }, [scriptLoaded, config, resolvedPublicKey, resolvedCurrency, log, onError, isMockMode, handlePaymentSuccess]);
+    void run();
+  }, [
+    scriptLoaded,
+    config,
+    resolvedPublicKey,
+    resolvedCurrency,
+    log,
+    onError,
+    isMockMode,
+    handlePaymentSuccess,
+    onBeforePayment,
+    isPreparing,
+    emitAnalytics,
+  ]);
 
   return {
     openDialog,
@@ -304,5 +535,6 @@ export function useFedaPay(
     scriptLoaded,
     isMockMode,
     isVerifying,
+    isPreparing,
   };
 }

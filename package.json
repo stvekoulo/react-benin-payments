@@ -34,6 +34,26 @@
         "types": "./dist/index.d.ts",
         "default": "./dist/index.js"
       }
+    },
+    "./fedapay": {
+      "import": {
+        "types": "./dist/fedapay.d.mts",
+        "default": "./dist/fedapay.mjs"
+      },
+      "require": {
+        "types": "./dist/fedapay.d.ts",
+        "default": "./dist/fedapay.js"
+      }
+    },
+    "./kkiapay": {
+      "import": {
+        "types": "./dist/kkiapay.d.mts",
+        "default": "./dist/kkiapay.mjs"
+      },
+      "require": {
+        "types": "./dist/kkiapay.d.ts",
+        "default": "./dist/kkiapay.js"
+      }
     }
   },
   "files": [

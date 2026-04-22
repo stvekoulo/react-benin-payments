@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useFedaPay } from "../../hooks/useFedaPay";
+import React from "react";
+import { BeninPaymentProvider } from "../../context";
 
 describe("useFedaPay", () => {
   beforeEach(() => {
@@ -76,6 +78,161 @@ describe("useFedaPay", () => {
   });
 
   describe("simulation de paiement (mock mode)", () => {
+    it("émet des événements analytics standardisés", async () => {
+      const onAnalyticsEvent = vi.fn();
+      const { result } = renderHook(() =>
+        useFedaPay(
+          {
+            public_key: "pk_live_test",
+            transaction: { amount: 5000 },
+          },
+          { mock: true, onAnalyticsEvent }
+        )
+      );
+
+      await act(async () => {
+        result.current.openDialog();
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(onAnalyticsEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "payment_open_attempted",
+          provider: "fedapay",
+          amount: 5000,
+          mode: "mock",
+          timestamp: expect.any(String),
+        })
+      );
+      expect(onAnalyticsEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "payment_completed",
+          provider: "fedapay",
+          amount: 5000,
+          transactionId: expect.any(String),
+          mode: "mock",
+          timestamp: expect.any(String),
+        })
+      );
+    });
+
+    it("utilise le handler analytics du provider", async () => {
+      const onAnalyticsEvent = vi.fn();
+      const wrapper = ({ children }: { children: React.ReactNode }) =>
+        React.createElement(
+          BeninPaymentProvider as React.ComponentType<{
+            onAnalyticsEvent: typeof onAnalyticsEvent;
+            children?: React.ReactNode;
+          }>,
+          { onAnalyticsEvent },
+          children
+        );
+
+      const { result } = renderHook(
+        () =>
+          useFedaPay(
+            {
+              public_key: "pk_live_test",
+              transaction: { amount: 5000 },
+            },
+            { mock: true }
+          ),
+        { wrapper }
+      );
+
+      await act(async () => {
+        result.current.openDialog();
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(onAnalyticsEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "payment_completed",
+          provider: "fedapay",
+        })
+      );
+    });
+
+    it("attend onBeforePayment avant d'ouvrir le paiement", async () => {
+      const order: string[] = [];
+      const onComplete = vi.fn(() => {
+        order.push("complete");
+      });
+      const onBeforePayment = vi.fn().mockImplementation(async () => {
+        order.push("before:start");
+        await Promise.resolve();
+        order.push("before:end");
+      });
+
+      const { result } = renderHook(() =>
+        useFedaPay(
+          {
+            public_key: "pk_live_test",
+            transaction: { amount: 5000 },
+            onComplete,
+          },
+          { mock: true, onBeforePayment }
+        )
+      );
+
+      await act(async () => {
+        result.current.openDialog();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(onBeforePayment).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(["before:start", "before:end", "complete"]);
+    });
+
+    it("annule l'ouverture si onBeforePayment retourne false", async () => {
+      const onComplete = vi.fn();
+      const { result } = renderHook(() =>
+        useFedaPay(
+          {
+            public_key: "pk_live_test",
+            transaction: { amount: 5000 },
+            onComplete,
+          },
+          { mock: true, onBeforePayment: vi.fn().mockResolvedValue(false) }
+        )
+      );
+
+      await act(async () => {
+        result.current.openDialog();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(onComplete).not.toHaveBeenCalled();
+    });
+
+    it("propage une erreur si onBeforePayment échoue", async () => {
+      const onError = vi.fn();
+      const { result } = renderHook(() =>
+        useFedaPay(
+          { transaction: { amount: 5000 } },
+          {
+            mock: true,
+            onError,
+            onBeforePayment: vi.fn().mockRejectedValue(new Error("Stock indisponible")),
+          }
+        )
+      );
+
+      await act(async () => {
+        result.current.openDialog();
+        await Promise.resolve();
+      });
+
+      expect(onError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "PRE_VALIDATION_FAILED",
+          message: "Stock indisponible",
+        })
+      );
+    });
+
     it("appelle onComplete après 1 seconde", async () => {
       const onComplete = vi.fn();
       const { result } = renderHook(() =>

@@ -22,6 +22,7 @@ describe("useBeninConfig sans provider", () => {
 
 describe("useBeninConfig avec provider", () => {
   it("retourne les valeurs configurées", () => {
+    const onAnalyticsEvent = () => undefined;
     const wrapper = ({ children }: { children: React.ReactNode }) => (
       <BeninPaymentProvider
         fedaPayPublicKey="pk_live_test"
@@ -29,6 +30,7 @@ describe("useBeninConfig avec provider", () => {
         defaultCurrency="EUR"
         isTestMode={true}
         debug={true}
+        onAnalyticsEvent={onAnalyticsEvent}
       >
         {children}
       </BeninPaymentProvider>
@@ -41,6 +43,7 @@ describe("useBeninConfig avec provider", () => {
     expect(result.current.defaultCurrency).toBe("EUR");
     expect(result.current.isTestMode).toBe(true);
     expect(result.current.debug).toBe(true);
+    expect(result.current.onAnalyticsEvent).toBe(onAnalyticsEvent);
     expect(result.current.isProviderMounted).toBe(true);
   });
 

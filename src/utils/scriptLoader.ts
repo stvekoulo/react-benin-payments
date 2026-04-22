@@ -24,7 +24,33 @@ export function loadScript(src: string, id: string): Promise<boolean> {
     const existingScript = document.getElementById(id) as HTMLScriptElement | null;
 
     if (existingScript) {
-      resolve(true);
+      const scriptState = existingScript as HTMLScriptElement & {
+        readyState?: string;
+      };
+      const isAlreadyLoaded =
+        existingScript.dataset.loaded === "true" ||
+        scriptState.readyState === "complete";
+
+      if (isAlreadyLoaded) {
+        resolve(true);
+        return;
+      }
+
+      const handleLoad = () => {
+        existingScript.dataset.loaded = "true";
+        existingScript.removeEventListener("load", handleLoad);
+        existingScript.removeEventListener("error", handleError);
+        resolve(true);
+      };
+
+      const handleError = () => {
+        existingScript.removeEventListener("load", handleLoad);
+        existingScript.removeEventListener("error", handleError);
+        reject(new Error(`Failed to load script: ${src}`));
+      };
+
+      existingScript.addEventListener("load", handleLoad);
+      existingScript.addEventListener("error", handleError);
       return;
     }
 
@@ -34,6 +60,7 @@ export function loadScript(src: string, id: string): Promise<boolean> {
     script.async = true;
 
     script.onload = () => {
+      script.dataset.loaded = "true";
       resolve(true);
     };
 

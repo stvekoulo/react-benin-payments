@@ -1,9 +1,13 @@
 
 
+"use client";
+
+import { useState } from "react";
 import { useFedaPay, type UseFedaPayConfig, type UseFedaPayOptions } from "./useFedaPay";
 import { useKkiaPay, type UseKkiaPayConfig } from "./useKkiaPay";
 import type { FedaPayCallbackResponse, KkiaPaySuccessResponse, KkiaPayFailedResponse } from "../types";
 import type { PaymentValidationError } from "../types/validation";
+import type { BeninPaymentAnalyticsHandler } from "../utils/analytics";
 
 /**
  * Supported payment providers.
@@ -50,6 +54,10 @@ export interface UseBeninPayOptions {
   debug?: boolean;
   /** Enable mock mode for testing */
   mock?: boolean;
+  /** Runs before opening the selected payment provider modal/widget */
+  onBeforePayment?: () => void | boolean | Promise<void | boolean>;
+  /** Receives standardized analytics events for the payment lifecycle */
+  onAnalyticsEvent?: BeninPaymentAnalyticsHandler;
   /** Callback on successful payment */
   onSuccess?: (result: UnifiedPaymentResult) => void;
   /** Callback on failed payment */
@@ -78,6 +86,10 @@ export interface UseBeninPayReturn {
   isMockMode: boolean;
   /** Whether backend verification is in progress */
   isVerifying: boolean;
+  /** The most recent successful transaction, if any */
+  lastTransaction: UnifiedPaymentResult | null;
+  /** Whether async pre-validation is in progress */
+  isPreparing: boolean;
 }
 
 /**
@@ -133,32 +145,59 @@ export function useBeninPay(
   options: UseBeninPayOptions = {}
 ): UseBeninPayReturn {
   const { provider, fedapay, kkiapay } = config;
-  const { debug, mock, onSuccess, onFailed, onClose, onError } = options;
-
-  const fedaPayOptions: UseFedaPayOptions = {
+  const {
     debug,
     mock,
+    onBeforePayment,
+    onAnalyticsEvent,
+    onSuccess,
+    onFailed,
+    onClose,
+    onError,
+  } = options;
+  const [lastTransaction, setLastTransaction] =
+    useState<UnifiedPaymentResult | null>(null);
+
+  // BUG FIX 1: Pass mock:true to the non-selected provider so its SDK script
+  // is never loaded. Both hooks must always be called (React rules of hooks),
+  // but only the active provider's real SDK is fetched.
+  const fedaPayOptions: UseFedaPayOptions = {
+    debug,
+    mock: provider !== "fedapay" ? true : mock,
+    onBeforePayment,
+    onAnalyticsEvent,
     onError,
   };
 
-  const fedaPayConfig: UseFedaPayConfig = fedapay ?? {
-    transaction: { amount: 0 },
+  // BUG FIX 2: Build a new config object with spread instead of mutating the
+  // fedapay prop reference directly (which caused subtle re-render bugs).
+  const fedaPayConfig: UseFedaPayConfig = {
+    ...(fedapay ?? { transaction: { amount: 0 } }),
+    ...(fedapay && onSuccess
+      ? {
+          onComplete: (response) => {
+            const unified: UnifiedPaymentResult = {
+              transactionId: response.transaction.reference,
+              amount: response.transaction.amount,
+              status:
+                response.transaction.status === "approved" ? "success" : "pending",
+              rawResponse: response,
+            };
+            setLastTransaction(unified);
+            fedapay.onComplete?.(response);
+            onSuccess(unified);
+          },
+        }
+      : {}),
+    ...(fedapay && onClose
+      ? {
+          onClose: () => {
+            fedapay.onClose?.();
+            onClose();
+          },
+        }
+      : {}),
   };
-
-  if (fedapay && onSuccess) {
-    fedaPayConfig.onComplete = (response) => {
-      const unified: UnifiedPaymentResult = {
-        transactionId: response.transaction.reference,
-        amount: response.transaction.amount,
-        status: response.transaction.status === "approved" ? "success" : "pending",
-        rawResponse: response,
-      };
-      onSuccess(unified);
-    };
-  }
-  if (fedapay && onClose) {
-    fedaPayConfig.onClose = onClose;
-  }
 
   const {
     openDialog,
@@ -167,8 +206,10 @@ export function useBeninPay(
     scriptLoaded: fedaReady,
     isMockMode: fedaMock,
     isVerifying: fedaVerifying,
+    isPreparing: fedaPreparing,
   } = useFedaPay(fedaPayConfig, fedaPayOptions);
 
+  // BUG FIX 1 (continued): mirror the same mock-bypass for KKiaPay.
   const {
     openKkiapay,
     loading: kkiaLoading,
@@ -176,9 +217,15 @@ export function useBeninPay(
     scriptLoaded: kkiaReady,
     isMockMode: kkiaMock,
     isVerifying: kkiaVerifying,
+    isPreparing: kkiaPreparing,
   } = useKkiaPay({
     debug,
-    mock,
+    mock: provider !== "kkiapay" ? true : mock,
+    verifyUrl: kkiapay?.verifyUrl,
+    verifyMethod: kkiapay?.verifyMethod,
+    customVerifyHeaders: kkiapay?.customVerifyHeaders,
+    onBeforePayment,
+    onAnalyticsEvent,
     onSuccess: onSuccess
       ? (data) => {
           const unified: UnifiedPaymentResult = {
@@ -187,11 +234,16 @@ export function useBeninPay(
             status: "success",
             rawResponse: data,
           };
+          setLastTransaction(unified);
           onSuccess(unified);
         }
       : undefined,
     onFailed,
-    onClose,
+    onClose: onClose
+      ? () => {
+          onClose();
+        }
+      : undefined,
     onValidationError: onError,
   });
 
@@ -204,6 +256,8 @@ export function useBeninPay(
       provider: "fedapay",
       isMockMode: fedaMock,
       isVerifying: fedaVerifying,
+      lastTransaction,
+      isPreparing: fedaPreparing,
     };
   }
 
@@ -217,5 +271,7 @@ export function useBeninPay(
     provider: "kkiapay",
     isMockMode: kkiaMock,
     isVerifying: kkiaVerifying,
+    lastTransaction,
+    isPreparing: kkiaPreparing,
   };
 }

@@ -1,3 +1,5 @@
+"use client";
+
 export {
   BeninPaymentProvider,
   useBeninConfig,

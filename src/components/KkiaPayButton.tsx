@@ -1,10 +1,13 @@
 
 
+"use client";
+
 import React, { forwardRef } from "react";
 import { useKkiaPay } from "../hooks/useKkiaPay";
 import type { UseKkiaPayConfig } from "../hooks/useKkiaPay";
 import type { KkiaPaySuccessResponse, KkiaPayFailedResponse } from "../types";
 import type { PaymentValidationError } from "../types/validation";
+import type { BeninPaymentAnalyticsHandler } from "../utils/analytics";
 
 export interface KkiaPayButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -21,6 +24,8 @@ export interface KkiaPayButtonProps
   verifyingText?: string;
   /** @default false */
   debug?: boolean;
+  onBeforePayment?: () => void | boolean | Promise<void | boolean>;
+  onAnalyticsEvent?: BeninPaymentAnalyticsHandler;
   verifyUrl?: string;
   customVerifyHeaders?: Record<string, string>;
 }
@@ -37,6 +42,8 @@ export const KkiaPayButton = forwardRef<HTMLButtonElement, KkiaPayButtonProps>(
       loadingText = "Chargement...",
       verifyingText = "Vérification...",
       debug = false,
+      onBeforePayment,
+      onAnalyticsEvent,
       verifyUrl,
       customVerifyHeaders,
       children,
@@ -46,8 +53,10 @@ export const KkiaPayButton = forwardRef<HTMLButtonElement, KkiaPayButtonProps>(
     },
     ref
   ) => {
-    const { openKkiapay, loading, scriptLoaded, isVerifying } = useKkiaPay({
+    const { openKkiapay, loading, scriptLoaded, isVerifying, isPreparing } = useKkiaPay({
       debug,
+      onBeforePayment,
+      onAnalyticsEvent,
       onSuccess,
       onFailed,
       onClose: onPaymentClose,
@@ -56,7 +65,7 @@ export const KkiaPayButton = forwardRef<HTMLButtonElement, KkiaPayButtonProps>(
       customVerifyHeaders,
     });
 
-    const isDisabled = disabled || loading || !scriptLoaded || isVerifying;
+    const isDisabled = disabled || loading || !scriptLoaded || isVerifying || isPreparing;
 
     const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
       if (isDisabled) {
@@ -68,7 +77,7 @@ export const KkiaPayButton = forwardRef<HTMLButtonElement, KkiaPayButtonProps>(
     };
 
     const getButtonText = () => {
-      if (loading) return loadingText;
+      if (loading || isPreparing) return loadingText;
       if (isVerifying) return verifyingText;
       return children ?? text;
     };
@@ -78,7 +87,7 @@ export const KkiaPayButton = forwardRef<HTMLButtonElement, KkiaPayButtonProps>(
         ref={ref}
         type="button"
         disabled={isDisabled}
-        aria-busy={loading || isVerifying}
+        aria-busy={loading || isVerifying || isPreparing}
         onClick={handleClick}
         style={{ cursor: isDisabled ? "not-allowed" : "pointer", ...style }}
         {...props}

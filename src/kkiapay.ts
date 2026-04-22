@@ -1,5 +1,3 @@
-
-
 "use client";
 
 // Context & Provider
@@ -13,37 +11,20 @@ export type {
   BeninPaymentProviderProps,
 } from "./context";
 
-// Hooks
-export { useFedaPay } from "./hooks/useFedaPay";
+// KKiaPay hooks
 export { useKkiaPay } from "./hooks/useKkiaPay";
-export { useBeninPay } from "./hooks/useBeninPay";
 export { usePaymentStatus } from "./hooks/usePaymentStatus";
 export { usePaymentHistory } from "./hooks/usePaymentHistory";
 export { useRetryPayment } from "./hooks/useRetryPayment";
 
 // Hook types
 export type {
-  UseFedaPayOptions,
-  UseFedaPayReturn,
-  UseFedaPayConfig,
-} from "./hooks/useFedaPay";
-export type {
   UseKkiaPayOptions,
   UseKkiaPayReturn,
   UseKkiaPayConfig,
 } from "./hooks/useKkiaPay";
 export type {
-  PaymentProvider,
-  UnifiedPaymentResult,
-  UseBeninPayConfig,
-  UseBeninPayOptions,
-  UseBeninPayReturn,
-} from "./hooks/useBeninPay";
-export type {
   TransactionStatus,
-  PaymentStatusTransport,
-  PaymentStatusWebSocketLike,
-  UsePaymentStatusWebSocketMessage,
   UsePaymentStatusOptions,
   UsePaymentStatusReturn,
 } from "./hooks/usePaymentStatus";
@@ -58,7 +39,7 @@ export type {
   UseRetryPaymentReturn,
 } from "./hooks/useRetryPayment";
 
-// Validation types
+// Validation & analytics types
 export type {
   ValidationErrorCode,
   PaymentValidationError,
@@ -69,41 +50,27 @@ export type {
   BeninPaymentAnalyticsHandler,
 } from "./utils/analytics";
 
-// Components
-export {
-  FedaPayButton,
-  KkiaPayButton,
-  FedaPayConsumer,
-  KkiaPayConsumer,
-  FedaPayLogo,
-  KkiaPayLogo,
-  PaymentStatusBadge,
-} from "./components";
+// KKiaPay components
+export { KkiaPayButton } from "./components/KkiaPayButton";
+export { KkiaPayConsumer } from "./components/KkiaPayConsumer";
+export { KkiaPayLogo } from "./components/icons/KkiaPayLogo";
+export { PaymentStatusBadge } from "./components/PaymentStatusBadge";
 
 // Component types
+export type { KkiaPayButtonProps } from "./components/KkiaPayButton";
 export type {
-  FedaPayButtonProps,
-  KkiaPayButtonProps,
-  FedaPayConsumerProps,
-  FedaPayRenderProps,
   KkiaPayConsumerProps,
   KkiaPayRenderProps,
-  PaymentStatusBadgeProps,
-} from "./components";
+} from "./components/KkiaPayConsumer";
+export type { PaymentStatusBadgeProps } from "./components/PaymentStatusBadge";
 
-// Core types
+// KKiaPay and shared core types
 export type {
   Currency,
   PaymentMethod,
   VerifyMethod,
   VerificationConfig,
   VerificationResponse,
-  FedaPayTransaction,
-  FedaPayCustomer,
-  FedaPayConfig,
-  FedaPayCallbackResponse,
-  FedaPayCheckoutInstance,
-  FedaPayWidgetConfig,
   KkiaPayConfig,
   KkiaPaySuccessResponse,
   KkiaPayFailedResponse,

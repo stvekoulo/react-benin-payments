@@ -71,6 +71,105 @@ describe("useKkiaPay", () => {
   });
 
   describe("simulation de paiement (mock mode)", () => {
+    it("émet des événements analytics standardisés", async () => {
+      const onAnalyticsEvent = vi.fn();
+      const { result } = renderHook(() =>
+        useKkiaPay({ mock: true, onAnalyticsEvent })
+      );
+
+      await act(async () => {
+        result.current.openKkiapay({ amount: 5000 });
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(onAnalyticsEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "payment_open_attempted",
+          provider: "kkiapay",
+          amount: 5000,
+          mode: "mock",
+          timestamp: expect.any(String),
+        })
+      );
+      expect(onAnalyticsEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "payment_completed",
+          provider: "kkiapay",
+          amount: 5000,
+          transactionId: expect.any(String),
+          mode: "mock",
+          timestamp: expect.any(String),
+        })
+      );
+    });
+
+    it("attend onBeforePayment avant d'ouvrir le paiement", async () => {
+      const order: string[] = [];
+      const onSuccess = vi.fn(() => {
+        order.push("success");
+      });
+      const onBeforePayment = vi.fn().mockImplementation(async () => {
+        order.push("before:start");
+        await Promise.resolve();
+        order.push("before:end");
+      });
+
+      const { result } = renderHook(() =>
+        useKkiaPay({ mock: true, onSuccess, onBeforePayment })
+      );
+
+      await act(async () => {
+        result.current.openKkiapay({ amount: 5000 });
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(onBeforePayment).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(["before:start", "before:end", "success"]);
+    });
+
+    it("annule l'ouverture si onBeforePayment retourne false", async () => {
+      const onSuccess = vi.fn();
+      const { result } = renderHook(() =>
+        useKkiaPay({
+          mock: true,
+          onSuccess,
+          onBeforePayment: vi.fn().mockResolvedValue(false),
+        })
+      );
+
+      await act(async () => {
+        result.current.openKkiapay({ amount: 5000 });
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(onSuccess).not.toHaveBeenCalled();
+    });
+
+    it("propage une erreur si onBeforePayment échoue", async () => {
+      const onValidationError = vi.fn();
+      const { result } = renderHook(() =>
+        useKkiaPay({
+          mock: true,
+          onValidationError,
+          onBeforePayment: vi.fn().mockRejectedValue(new Error("Stock indisponible")),
+        })
+      );
+
+      await act(async () => {
+        result.current.openKkiapay({ amount: 5000 });
+        await Promise.resolve();
+      });
+
+      expect(onValidationError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "PRE_VALIDATION_FAILED",
+          message: "Stock indisponible",
+        })
+      );
+    });
+
     it("appelle onSuccess après 1 seconde", async () => {
       const onSuccess = vi.fn();
       const { result } = renderHook(() =>

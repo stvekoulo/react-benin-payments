@@ -3,7 +3,14 @@ import { readFileSync, writeFileSync } from "fs";
 import { resolve } from "path";
 
 const addUseClient = () => {
-  const files = ["dist/index.js", "dist/index.mjs"];
+  const files = [
+    "dist/index.js",
+    "dist/index.mjs",
+    "dist/fedapay.js",
+    "dist/fedapay.mjs",
+    "dist/kkiapay.js",
+    "dist/kkiapay.mjs",
+  ];
   files.forEach((file) => {
     const filePath = resolve(file);
     try {
@@ -19,7 +26,7 @@ const addUseClient = () => {
 
 export default defineConfig([
   {
-    entry: ["src/index.ts"],
+    entry: ["src/index.ts", "src/fedapay.ts", "src/kkiapay.ts"],
     format: ["cjs", "esm"],
     dts: true,
     splitting: false,

@@ -27,6 +27,36 @@ Gère automatiquement le chargement des scripts, les modales de paiement et la v
 
 ---
 
+## Mises à jour récentes
+
+### Bugs déjà corrigés dans le projet
+
+- `🐛 Bug 1 — Double chargement des SDKs`
+- `🐛 Bug 2 — Mutation directe de l'objet config (useBeninPay.ts)`
+- `🐛 Bug 3 — Boucle infinie de listeners KKiaPay (useKkiaPay.ts)`
+
+### Bugs corrigés dans cette mise à jour
+
+- Correction du loader de script pour éviter un faux positif quand le script existe déjà mais n'est pas encore chargé
+- Correction de `usePaymentStatus` pour arrêter proprement après `maxAttempts`, y compris en cas d'erreurs réseau répétées
+- Correction de `usePaymentHistory` pour recharger correctement l'historique quand `storage` ou `storageKey` changent
+- Correction des callbacks de `useBeninPay` pour ne plus écraser silencieusement les callbacks FedaPay existants
+- Transmission correcte de la configuration de vérification KKiaPay dans le hook unifié
+- Harmonisation de la doc et des types FedaPay pour éviter les incohérences d'intégration
+
+### Nouvelles fonctionnalités
+
+- `usePaymentHistory` — Historique des paiements en mémoire, session ou localStorage
+- `<PaymentStatusBadge />` — Composant visuel pour afficher le statut d'un paiement
+- `onBeforePayment` — Pré-validation asynchrone avant ouverture du widget
+- `useBeninPay.lastTransaction` — Dernière transaction réussie exposée directement
+- `Événements Analytics` — Événements standardisés compatibles PostHog, Mixpanel, etc.
+- `Améliorations Architecturales` — sous-entrées `fedapay` / `kkiapay` pour un meilleur tree-shaking
+- `React 19 / RSC` — marqueurs `"use client"` explicites sur les modules React exposés
+- `usePaymentStatus` — support WebSocket en plus du polling
+
+---
+
 ## Avant / Après
 
 ### Intégration manuelle (méthode classique)
@@ -51,7 +81,7 @@ const handlePayment = () => {
     return;
   }
 
-  const checkout = window.FedaPay.init("#container", {
+  const checkout = window.FedaPay.init({
     public_key: "pk_live_XXXXX",
     transaction: { amount: 5000 },
     onComplete: async (response) => {
@@ -122,6 +152,20 @@ yarn add react-benin-payments
 ```
 
 **Peer Dependencies :** `react >= 17.0.0`, `react-dom >= 17.0.0`
+
+### Imports séparés pour un meilleur tree-shaking
+
+Si vous n'utilisez qu'un seul provider, vous pouvez importer uniquement son entrypoint dédié:
+
+```tsx
+import { FedaPayButton, useFedaPay } from "react-benin-payments/fedapay";
+```
+
+```tsx
+import { KkiaPayButton, useKkiaPay } from "react-benin-payments/kkiapay";
+```
+
+L'entrée racine `react-benin-payments` reste disponible pour les usages mixtes ou pour `useBeninPay`.
 
 ---
 
@@ -195,6 +239,37 @@ function CustomPaymentUI() {
 }
 ```
 
+### Pré-validation avant paiement avec `onBeforePayment`
+
+```tsx
+import { useFedaPay } from "react-benin-payments";
+
+function CheckoutButton() {
+  const { openDialog, isPreparing, isVerifying } = useFedaPay(
+    {
+      transaction: { amount: 5000, description: "Commande #2025" },
+    },
+    {
+      onBeforePayment: async () => {
+        const stockOk = await fetch("/api/stock/check").then((res) => res.json());
+
+        if (!stockOk.available) {
+          throw new Error("Produit indisponible");
+        }
+
+        await fetch("/api/analytics/payment-intent", { method: "POST" });
+      },
+    }
+  );
+
+  return (
+    <button onClick={openDialog} disabled={isPreparing || isVerifying}>
+      {isPreparing ? "Préparation..." : "Payer"}
+    </button>
+  );
+}
+```
+
 ### KKiaPay
 
 ```tsx
@@ -225,7 +300,7 @@ import { useBeninPay } from "react-benin-payments";
 function FlexiblePayment() {
   const preferredProvider = getUserPreference() || "fedapay";
 
-  const { pay, loading, isReady, provider } = useBeninPay(
+  const { pay, loading, isReady, provider, lastTransaction } = useBeninPay(
     {
       provider: preferredProvider,
       fedapay: { transaction: { amount: 5000 } },
@@ -238,9 +313,114 @@ function FlexiblePayment() {
   );
 
   return (
-    <button onClick={pay} disabled={!isReady || loading}>
-      Payer avec {provider === "fedapay" ? "FedaPay" : "KKiaPay"}
-    </button>
+    <div>
+      <button onClick={pay} disabled={!isReady || loading}>
+        Payer avec {provider === "fedapay" ? "FedaPay" : "KKiaPay"}
+      </button>
+
+      {lastTransaction && (
+        <p>
+          Dernière transaction: {lastTransaction.transactionId} ({lastTransaction.amount} FCFA)
+        </p>
+      )}
+    </div>
+  );
+}
+```
+
+### Historique des paiements avec `usePaymentHistory`
+
+```tsx
+import { useBeninPay, usePaymentHistory, formatXOF } from "react-benin-payments";
+
+function PaymentsWithHistory() {
+  const { addToHistory, history, totalPaid } = usePaymentHistory({
+    storage: "session",
+    maxEntries: 20,
+  });
+
+  const { pay } = useBeninPay(
+    {
+      provider: "fedapay",
+      fedapay: { transaction: { amount: 5000 } },
+    },
+    {
+      mock: true,
+      onSuccess: (result) => addToHistory(result, "fedapay"),
+    }
+  );
+
+  return (
+    <div>
+      <button onClick={pay}>Payer</button>
+      <p>Total payé: {formatXOF(totalPaid)}</p>
+      <ul>
+        {history.map((entry) => (
+          <li key={entry.transactionId}>
+            {entry.transactionId} — {formatXOF(entry.amount)} — {entry.status}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
+
+### Statut visuel avec `<PaymentStatusBadge />`
+
+```tsx
+import { PaymentStatusBadge } from "react-benin-payments";
+
+function PaymentRow() {
+  return (
+    <div className="flex items-center gap-3">
+      <span>Commande #123</span>
+      <PaymentStatusBadge status="approved" />
+    </div>
+  );
+}
+```
+
+### Analytics standardisés
+
+```tsx
+import { useBeninPay } from "react-benin-payments";
+
+function AnalyticsExample() {
+  const { pay } = useBeninPay(
+    {
+      provider: "kkiapay",
+      kkiapay: { amount: 5000, name: "Jean Dupont" },
+    },
+    {
+      onAnalyticsEvent: (event) => {
+        posthog.capture(event.name, event);
+      },
+    }
+  );
+
+  return <button onClick={pay}>Payer</button>;
+}
+```
+
+### Suivi temps réel avec `usePaymentStatus` en WebSocket
+
+```tsx
+import { usePaymentStatus, PaymentStatusBadge } from "react-benin-payments";
+
+function LivePaymentStatus({ transactionId }: { transactionId: string }) {
+  const { status, isPolling } = usePaymentStatus({
+    transport: "websocket",
+    websocketUrl: `wss://api.example.com/payments/status?transactionId=${transactionId}`,
+    transactionId,
+    provider: "fedapay",
+  });
+
+  return (
+    <div>
+      <PaymentStatusBadge status={status} />
+      {isPolling && <p>Écoute des mises à jour en temps réel...</p>}
+    </div>
   );
 }
 ```

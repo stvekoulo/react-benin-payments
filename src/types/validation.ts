@@ -5,7 +5,8 @@ export type ValidationErrorCode =
   | "INVALID_AMOUNT"
   | "MISSING_PUBLIC_KEY"
   | "SDK_NOT_LOADED"
-  | "SDK_ERROR";
+  | "SDK_ERROR"
+  | "PRE_VALIDATION_FAILED";
 
 /**
  * Validation error returned when payment configuration is invalid.

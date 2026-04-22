@@ -167,8 +167,6 @@ export interface FedaPayCallbackResponse {
  * Returned by `window.FedaPay.init()`.
  */
 export interface FedaPayCheckoutInstance {
-  /** Initialize the widget in a DOM container */
-  init: (containerId: string, config: FedaPayWidgetConfig) => void;
   /** Open the payment dialog */
   open: () => void;
 }
@@ -300,7 +298,10 @@ export interface PaymentError {
 declare global {
   interface Window {
     FedaPay?: {
-      init: (options: FedaPayWidgetConfig) => FedaPayCheckoutInstance;
+      init: (
+        containerOrOptions: string | FedaPayWidgetConfig,
+        maybeOptions?: FedaPayWidgetConfig
+      ) => FedaPayCheckoutInstance;
       CHECKOUT_COMPLETED?: number;
       DIALOG_DISMISSED?: number;
     };

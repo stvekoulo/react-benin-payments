@@ -1,9 +1,12 @@
 
 
+"use client";
+
 import React, { forwardRef } from "react";
 import { useFedaPay } from "../hooks/useFedaPay";
 import type { UseFedaPayConfig } from "../hooks/useFedaPay";
 import type { PaymentValidationError } from "../types/validation";
+import type { BeninPaymentAnalyticsHandler } from "../utils/analytics";
 
 export interface FedaPayButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -16,6 +19,8 @@ export interface FedaPayButtonProps
   verifyingText?: string;
   /** @default false */
   debug?: boolean;
+  onBeforePayment?: () => void | boolean | Promise<void | boolean>;
+  onAnalyticsEvent?: BeninPaymentAnalyticsHandler;
   onPaymentError?: (error: PaymentValidationError) => void;
 }
 
@@ -27,6 +32,8 @@ export const FedaPayButton = forwardRef<HTMLButtonElement, FedaPayButtonProps>(
       loadingText = "Chargement...",
       verifyingText = "Vérification...",
       debug = false,
+      onBeforePayment,
+      onAnalyticsEvent,
       onPaymentError,
       children,
       disabled,
@@ -35,12 +42,14 @@ export const FedaPayButton = forwardRef<HTMLButtonElement, FedaPayButtonProps>(
     },
     ref
   ) => {
-    const { openDialog, loading, scriptLoaded, isVerifying } = useFedaPay(config, {
+    const { openDialog, loading, scriptLoaded, isVerifying, isPreparing } = useFedaPay(config, {
       debug,
+      onBeforePayment,
+      onAnalyticsEvent,
       onError: onPaymentError,
     });
 
-    const isDisabled = disabled || loading || !scriptLoaded || isVerifying;
+    const isDisabled = disabled || loading || !scriptLoaded || isVerifying || isPreparing;
 
     const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
       if (isDisabled) {
@@ -52,7 +61,7 @@ export const FedaPayButton = forwardRef<HTMLButtonElement, FedaPayButtonProps>(
     };
 
     const getButtonText = () => {
-      if (loading) return loadingText;
+      if (loading || isPreparing) return loadingText;
       if (isVerifying) return verifyingText;
       return children ?? text;
     };
@@ -62,7 +71,7 @@ export const FedaPayButton = forwardRef<HTMLButtonElement, FedaPayButtonProps>(
         ref={ref}
         type="button"
         disabled={isDisabled}
-        aria-busy={loading || isVerifying}
+        aria-busy={loading || isVerifying || isPreparing}
         onClick={handleClick}
         style={{ cursor: isDisabled ? "not-allowed" : "pointer", ...style }}
         {...props}

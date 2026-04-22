@@ -7,15 +7,16 @@ Guide complet pour intégrer les paiements FedaPay et KKiaPay dans vos applicati
 ## Table des matières
 
 1. [Introduction](#introduction)
-2. [Installation](#installation)
-3. [Configuration initiale](#configuration-initiale)
-4. [Utilisation de base](#utilisation-de-base)
-5. [Utilisation avancée](#utilisation-avancée)
-6. [Référence API](#référence-api)
-7. [Utilitaires](#utilitaires)
-8. [Gestion des erreurs](#gestion-des-erreurs)
-9. [Mode Test et Production](#mode-test-et-production)
-10. [FAQ](#faq)
+2. [Nouveautés et corrections](#nouveautés-et-corrections)
+3. [Installation](#installation)
+4. [Configuration initiale](#configuration-initiale)
+5. [Utilisation de base](#utilisation-de-base)
+6. [Utilisation avancée](#utilisation-avancée)
+7. [Référence API](#référence-api)
+8. [Utilitaires](#utilitaires)
+9. [Gestion des erreurs](#gestion-des-erreurs)
+10. [Mode Test et Production](#mode-test-et-production)
+11. [FAQ](#faq)
 
 ---
 
@@ -46,6 +47,36 @@ Guide complet pour intégrer les paiements FedaPay et KKiaPay dans vos applicati
 
 ---
 
+## Nouveautés et corrections
+
+### Bugs déjà corrigés dans le projet
+
+- `🐛 Bug 1 — Double chargement des SDKs`
+- `🐛 Bug 2 — Mutation directe de l'objet config (useBeninPay.ts)`
+- `🐛 Bug 3 — Boucle infinie de listeners KKiaPay (useKkiaPay.ts)`
+
+### Bugs corrigés dans cette mise à jour
+
+- Le loader de scripts gère maintenant correctement le cas où un SDK est déjà présent dans le DOM mais pas encore chargé
+- `usePaymentStatus` arrête désormais proprement le suivi après `maxAttempts`, même en cas d'erreurs backend répétées
+- `usePaymentHistory` recharge bien les données si `storage` ou `storageKey` changent
+- `useBeninPay` ne remplace plus silencieusement certains callbacks FedaPay existants
+- La configuration de vérification KKiaPay est correctement transmise par le hook universel
+- Les signatures et exemples FedaPay ont été harmonisés entre la doc et le code
+
+### Nouvelles fonctionnalités
+
+- `usePaymentHistory` pour conserver un historique de paiement en mémoire, session ou localStorage
+- `<PaymentStatusBadge />` pour afficher un statut visuel prêt à l'emploi
+- `onBeforePayment` pour exécuter une logique asynchrone avant l'ouverture du paiement
+- `useBeninPay.lastTransaction` pour récupérer la dernière transaction réussie sans `useState` supplémentaire
+- `Événements Analytics` standardisés pour PostHog, Mixpanel ou un tracker maison
+- `Imports séparés` via `react-benin-payments/fedapay` et `react-benin-payments/kkiapay`
+- Compatibilité renforcée `React 19 / React Server Components` avec marqueurs `"use client"`
+- `usePaymentStatus` avec support `WebSocket` en plus du polling
+
+---
+
 ## Installation
 
 ### Via npm
@@ -65,6 +96,20 @@ yarn add react-benin-payments
 ```bash
 pnpm add react-benin-payments
 ```
+
+### Imports séparés pour un meilleur tree-shaking
+
+Si vous n'utilisez qu'un seul provider, vous pouvez importer uniquement son entrypoint dédié :
+
+```tsx
+import { FedaPayButton, useFedaPay } from "react-benin-payments/fedapay";
+```
+
+```tsx
+import { KkiaPayButton, useKkiaPay } from "react-benin-payments/kkiapay";
+```
+
+L'entrée racine `react-benin-payments` reste la meilleure option pour `useBeninPay` ou pour les projets qui utilisent les deux providers.
 
 ### Vérification de l'installation
 
@@ -259,6 +304,7 @@ function CustomPaymentForm() {
     scriptLoaded, // true quand le SDK est prêt
     isVerifying, // true pendant la vérification backend
     isMockMode, // true si en mode simulation
+    isPreparing, // true pendant la pré-validation
   } = useFedaPay(
     {
       transaction: {
@@ -282,6 +328,14 @@ function CustomPaymentForm() {
     {
       debug: true, // Active les logs console
       mock: false, // Mode simulation
+      onBeforePayment: async () => {
+        const response = await fetch("/api/stock/check");
+        const data = await response.json();
+
+        if (!data.available) {
+          throw new Error("Produit indisponible");
+        }
+      },
       onError: (error) => {
         // Gestion des erreurs de validation
         toast.error(error.message);
@@ -303,10 +357,12 @@ function CustomPaymentForm() {
 
       <button
         onClick={openDialog}
-        disabled={!scriptLoaded || isVerifying}
+        disabled={!scriptLoaded || isVerifying || isPreparing}
         className="w-full bg-green-600 text-white py-3 rounded-lg disabled:opacity-50"
       >
-        {isVerifying ? "Vérification en cours..." : "Procéder au paiement"}
+        {isPreparing && "Préparation..."}
+        {!isPreparing && isVerifying && "Vérification en cours..."}
+        {!isPreparing && !isVerifying && "Procéder au paiement"}
       </button>
     </div>
   );
@@ -372,6 +428,8 @@ function FlexiblePayment() {
     isVerifying,
     isMockMode,
     provider: currentProvider,
+    lastTransaction,
+    isPreparing,
   } = useBeninPay(
     {
       provider,
@@ -387,6 +445,9 @@ function FlexiblePayment() {
     },
     {
       debug: true,
+      onBeforePayment: async () => {
+        await fetch("/api/audit/payment-intent", { method: "POST" });
+      },
       onSuccess: (result) => {
         // Interface unifiée pour les deux providers
         console.log("Transaction ID:", result.transactionId);
@@ -429,13 +490,112 @@ function FlexiblePayment() {
 
       <button
         onClick={pay}
-        disabled={!isReady || loading || isVerifying}
+        disabled={!isReady || loading || isVerifying || isPreparing}
         className="w-full bg-black text-white py-3 rounded-lg"
       >
         {loading && "Chargement..."}
+        {isPreparing && "Préparation..."}
         {isVerifying && "Vérification..."}
-        {!loading && !isVerifying && `Payer avec ${currentProvider}`}
+        {!loading &&
+          !isPreparing &&
+          !isVerifying &&
+          `Payer avec ${currentProvider}`}
       </button>
+
+      {lastTransaction && (
+        <p className="mt-3 text-sm text-gray-600">
+          Dernière transaction : {lastTransaction.transactionId} ({lastTransaction.amount} FCFA)
+        </p>
+      )}
+    </div>
+  );
+}
+```
+
+### Historique des paiements avec usePaymentHistory
+
+```tsx
+import {
+  useBeninPay,
+  usePaymentHistory,
+  PaymentStatusBadge,
+  formatXOF,
+} from "react-benin-payments";
+
+function PaymentHistoryExample() {
+  const { history, addToHistory, totalPaid } = usePaymentHistory({
+    storage: "session",
+    maxEntries: 20,
+  });
+
+  const { pay } = useBeninPay(
+    {
+      provider: "fedapay",
+      fedapay: {
+        transaction: { amount: 5000, description: "Commande #456" },
+      },
+    },
+    {
+      mock: true,
+      onSuccess: (result) => addToHistory(result, "fedapay"),
+    }
+  );
+
+  return (
+    <div className="space-y-4">
+      <button onClick={pay}>Simuler un paiement</button>
+
+      <p>Total payé : {formatXOF(totalPaid)}</p>
+
+      <ul className="space-y-2">
+        {history.map((entry) => (
+          <li key={entry.transactionId} className="flex items-center gap-3">
+            <span>{entry.transactionId}</span>
+            <PaymentStatusBadge status={entry.status === "success" ? "approved" : "pending"} />
+            <span>{formatXOF(entry.amount)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
+
+### Analytics standardisés
+
+```tsx
+import { BeninPaymentProvider } from "react-benin-payments";
+
+function App({ children }: { children: React.ReactNode }) {
+  return (
+    <BeninPaymentProvider
+      onAnalyticsEvent={(event) => {
+        posthog.capture(event.name, event);
+      }}
+    >
+      {children}
+    </BeninPaymentProvider>
+  );
+}
+```
+
+### Suivi en temps réel avec WebSocket
+
+```tsx
+import { usePaymentStatus, PaymentStatusBadge } from "react-benin-payments";
+
+function LiveStatus({ transactionId }: { transactionId: string }) {
+  const { status, isPolling } = usePaymentStatus({
+    transport: "websocket",
+    websocketUrl: `wss://api.example.com/payments/status?transactionId=${transactionId}`,
+    transactionId,
+    provider: "fedapay",
+  });
+
+  return (
+    <div className="space-y-2">
+      <PaymentStatusBadge status={status} />
+      {isPolling && <p>Connexion temps réel active...</p>}
     </div>
   );
 }
@@ -638,6 +798,9 @@ interface BeninPaymentProviderProps {
 
   // Active les logs de débogage dans la console
   debug?: boolean; // défaut: false
+
+  // Callback global pour les événements analytics standardisés
+  onAnalyticsEvent?: BeninPaymentAnalyticsHandler;
 }
 ```
 
@@ -665,6 +828,8 @@ const {
 | `loadingText`    | `string`           | `'Chargement...'`   | Texte pendant le chargement   |
 | `verifyingText`  | `string`           | `'Vérification...'` | Texte pendant la vérification |
 | `debug`          | `boolean`          | `false`             | Active les logs               |
+| `onBeforePayment`| `() => Promise<void \| boolean>` | -     | Pré-validation avant ouverture |
+| `onAnalyticsEvent` | `(event) => void` | -                  | Événements analytics standardisés |
 | `onPaymentError` | `(error) => void`  | -                   | Callback d'erreur             |
 | `className`      | `string`           | -                   | Classes CSS                   |
 | `style`          | `CSSProperties`    | -                   | Styles inline                 |
@@ -682,8 +847,19 @@ const {
 | `text`                | `string`           | `'Payer'`           | Texte du bouton               |
 | `loadingText`         | `string`           | `'Chargement...'`   | Texte pendant le chargement   |
 | `verifyingText`       | `string`           | `'Vérification...'` | Texte pendant la vérification |
+| `onBeforePayment`     | `() => Promise<void \| boolean>` | -    | Pré-validation avant ouverture |
+| `onAnalyticsEvent`    | `(event) => void` | -                   | Événements analytics standardisés |
 | `verifyUrl`           | `string`           | -                   | URL de vérification backend   |
 | `customVerifyHeaders` | `object`           | -                   | Headers personnalisés         |
+
+### PaymentStatusBadge
+
+| Prop            | Type                          | Défaut | Description |
+| --------------- | ----------------------------- | ------ | ----------- |
+| `status`        | `TransactionStatus`           | required | Statut affiché |
+| `labels`        | `Partial<Record<status,node>>` | -    | Libellés personnalisés |
+| `statusClasses` | `Partial<Record<status,string>>` | - | Classes CSS par statut |
+| `unstyled`      | `boolean`                     | `false` | Désactive les styles inline |
 
 ### useFedaPay
 
@@ -733,6 +909,8 @@ interface UseFedaPayConfig {
 interface UseFedaPayOptions {
   debug?: boolean;
   mock?: boolean;
+  onBeforePayment?: () => void | boolean | Promise<void | boolean>;
+  onAnalyticsEvent?: BeninPaymentAnalyticsHandler;
   onError?: (error: PaymentValidationError) => void;
 }
 
@@ -743,6 +921,7 @@ interface UseFedaPayReturn {
   scriptLoaded: boolean;
   isMockMode: boolean;
   isVerifying: boolean;
+  isPreparing: boolean;
 }
 ```
 
@@ -780,6 +959,8 @@ interface UseKkiaPayConfig {
 interface UseKkiaPayOptions {
   debug?: boolean;
   mock?: boolean;
+  onBeforePayment?: () => void | boolean | Promise<void | boolean>;
+  onAnalyticsEvent?: BeninPaymentAnalyticsHandler;
   verifyUrl?: string;
   verifyMethod?: "POST" | "GET";
   customVerifyHeaders?: Record<string, string>;
@@ -796,6 +977,7 @@ interface UseKkiaPayReturn {
   scriptLoaded: boolean;
   isMockMode: boolean;
   isVerifying: boolean;
+  isPreparing: boolean;
 }
 ```
 
@@ -811,6 +993,8 @@ interface UseBeninPayConfig {
 interface UseBeninPayOptions {
   debug?: boolean;
   mock?: boolean;
+  onBeforePayment?: () => void | boolean | Promise<void | boolean>;
+  onAnalyticsEvent?: BeninPaymentAnalyticsHandler;
   onSuccess?: (result: UnifiedPaymentResult) => void;
   onFailed?: (error: KkiaPayFailedResponse) => void;
   onClose?: () => void;
@@ -832,7 +1016,74 @@ interface UseBeninPayReturn {
   provider: "fedapay" | "kkiapay";
   isMockMode: boolean;
   isVerifying: boolean;
+  isPreparing: boolean;
+  lastTransaction: UnifiedPaymentResult | null;
 }
+```
+
+### usePaymentStatus
+
+```tsx
+type PaymentStatusTransport = "polling" | "websocket";
+
+interface UsePaymentStatusOptions {
+  checkUrl?: string;
+  transactionId: string;
+  provider: "fedapay" | "kkiapay";
+  transport?: PaymentStatusTransport;
+  pollInterval?: number;
+  maxAttempts?: number;
+  customHeaders?: Record<string, string>;
+  websocketUrl?: string;
+  websocketProtocols?: string | string[];
+  websocketFactory?: (
+    url: string,
+    protocols?: string | string[]
+  ) => PaymentStatusWebSocketLike;
+  parseWebSocketMessage?: (
+    event: MessageEvent
+  ) => TransactionStatus | { status?: TransactionStatus } | null | undefined;
+  onStatusChange?: (status: TransactionStatus) => void;
+  enabled?: boolean;
+  debug?: boolean;
+}
+```
+
+### usePaymentHistory
+
+```tsx
+interface UsePaymentHistoryOptions {
+  storage?: "memory" | "session" | "local";
+  storageKey?: string;
+  maxEntries?: number;
+}
+
+interface PaymentHistoryEntry extends UnifiedPaymentResult {
+  recordedAt: string;
+  provider?: "fedapay" | "kkiapay";
+}
+```
+
+### Analytics
+
+```tsx
+type BeninPaymentAnalyticsEventName =
+  | "sdk_load_started"
+  | "sdk_load_succeeded"
+  | "sdk_load_failed"
+  | "payment_validation_failed"
+  | "payment_pre_validation_started"
+  | "payment_pre_validation_succeeded"
+  | "payment_pre_validation_cancelled"
+  | "payment_pre_validation_failed"
+  | "payment_open_attempted"
+  | "payment_opened"
+  | "payment_completed"
+  | "payment_failed"
+  | "payment_closed"
+  | "payment_verification_started"
+  | "payment_verification_succeeded"
+  | "payment_verification_failed";
 ```
 
 ---

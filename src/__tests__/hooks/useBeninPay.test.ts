@@ -48,6 +48,7 @@ describe("useBeninPay", () => {
       expect(result.current.isReady).toBe(true);
       expect(result.current.loading).toBe(false);
       expect(result.current.isMockMode).toBe(true);
+      expect(result.current.lastTransaction).toBeNull();
     });
 
     it("isReady=true en mode mock (kkiapay)", () => {
@@ -59,6 +60,7 @@ describe("useBeninPay", () => {
       );
 
       expect(result.current.isReady).toBe(true);
+      expect(result.current.lastTransaction).toBeNull();
     });
   });
 
@@ -81,6 +83,14 @@ describe("useBeninPay", () => {
       });
 
       expect(onSuccess).toHaveBeenCalledWith(
+        expect.objectContaining({
+          amount: 5000,
+          status: "success",
+          transactionId: expect.any(String),
+          rawResponse: expect.any(Object),
+        })
+      );
+      expect(result.current.lastTransaction).toEqual(
         expect.objectContaining({
           amount: 5000,
           status: "success",
@@ -114,6 +124,74 @@ describe("useBeninPay", () => {
           amount: 5000,
           status: "success",
           transactionId: expect.any(String),
+        })
+      );
+      expect(result.current.lastTransaction).toEqual(
+        expect.objectContaining({
+          amount: 5000,
+          status: "success",
+          transactionId: expect.any(String),
+        })
+      );
+    });
+  });
+
+  describe("pré-validation avant paiement", () => {
+    it("attend onBeforePayment avant un paiement unifié", async () => {
+      const order: string[] = [];
+      const onSuccess = vi.fn(() => {
+        order.push("success");
+      });
+      const onBeforePayment = vi.fn().mockImplementation(async () => {
+        order.push("before:start");
+        await Promise.resolve();
+        order.push("before:end");
+      });
+
+      const { result } = renderHook(() =>
+        useBeninPay(
+          {
+            provider: "fedapay",
+            fedapay: { transaction: { amount: 5000 } },
+          },
+          { mock: true, onSuccess, onBeforePayment }
+        )
+      );
+
+      await act(async () => {
+        result.current.pay();
+        await Promise.resolve();
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(onBeforePayment).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(["before:start", "before:end", "success"]);
+    });
+  });
+
+  describe("analytics", () => {
+    it("propage les événements analytics via useBeninPay", async () => {
+      const onAnalyticsEvent = vi.fn();
+      const { result } = renderHook(() =>
+        useBeninPay(
+          {
+            provider: "kkiapay",
+            kkiapay: { amount: 5000 },
+          },
+          { mock: true, onAnalyticsEvent }
+        )
+      );
+
+      await act(async () => {
+        result.current.pay();
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(onAnalyticsEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "payment_completed",
+          provider: "kkiapay",
+          amount: 5000,
         })
       );
     });

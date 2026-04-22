@@ -1,4 +1,4 @@
-
+"use client";
 
 import {
   createContext,
@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import type { Currency } from "../types";
+import type { BeninPaymentAnalyticsHandler } from "../utils/analytics";
 
 /**
  * Global configuration for Benin Payment providers.
@@ -41,6 +42,10 @@ export interface BeninPaymentConfig {
    * @default false
    */
   debug?: boolean;
+  /**
+   * Global analytics callback for standardized payment events.
+   */
+  onAnalyticsEvent?: BeninPaymentAnalyticsHandler;
 }
 
 /**
@@ -52,6 +57,7 @@ interface BeninPaymentContextValue {
   defaultCurrency: Currency;
   isTestMode: boolean;
   debug: boolean;
+  onAnalyticsEvent?: BeninPaymentAnalyticsHandler;
   isProviderMounted: boolean;
 }
 
@@ -109,6 +115,7 @@ export function BeninPaymentProvider({
   defaultCurrency = "XOF",
   isTestMode = false,
   debug = false,
+  onAnalyticsEvent,
   children,
 }: BeninPaymentProviderProps) {
   const value = useMemo<BeninPaymentContextValue>(
@@ -118,9 +125,10 @@ export function BeninPaymentProvider({
       defaultCurrency,
       isTestMode,
       debug,
+      onAnalyticsEvent,
       isProviderMounted: true,
     }),
-    [fedaPayPublicKey, kkiaPayPublicKey, defaultCurrency, isTestMode, debug]
+    [fedaPayPublicKey, kkiaPayPublicKey, defaultCurrency, isTestMode, debug, onAnalyticsEvent]
   );
 
   return (
@@ -162,6 +170,7 @@ export function useBeninConfig(): BeninPaymentContextValue {
       defaultCurrency: "XOF",
       isTestMode: false,
       debug: false,
+      onAnalyticsEvent: undefined,
       isProviderMounted: false,
     };
   }
