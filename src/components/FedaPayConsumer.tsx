@@ -1,5 +1,3 @@
-
-
 "use client";
 
 import { useFedaPay } from "../hooks/useFedaPay";

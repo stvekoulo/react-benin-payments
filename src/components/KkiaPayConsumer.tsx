@@ -1,5 +1,3 @@
-
-
 "use client";
 
 import { useKkiaPay } from "../hooks/useKkiaPay";
