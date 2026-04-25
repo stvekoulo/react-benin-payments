@@ -72,6 +72,9 @@
     "test:coverage": "vitest run --coverage",
     "prepublishOnly": "npm run build"
   },
+  "dependencies": {
+    "jspdf": "^2.5.2"
+  },
   "peerDependencies": {
     "react": ">=17.0.0",
     "react-dom": ">=17.0.0"

@@ -1,5 +1,3 @@
-
-
 "use client";
 
 // Context & Provider
@@ -20,6 +18,7 @@ export { useBeninPay } from "./hooks/useBeninPay";
 export { usePaymentStatus } from "./hooks/usePaymentStatus";
 export { usePaymentHistory } from "./hooks/usePaymentHistory";
 export { useRetryPayment } from "./hooks/useRetryPayment";
+export { usePaymentReceipt } from "./hooks/usePaymentReceipt";
 
 // Hook types
 export type {
@@ -57,6 +56,19 @@ export type {
   UseRetryPaymentOptions,
   UseRetryPaymentReturn,
 } from "./hooks/useRetryPayment";
+export type {
+  UsePaymentReceiptReturn,
+} from "./hooks/usePaymentReceipt";
+export type {
+  ReceiptConfig,
+  ReceiptTransactionData,
+  ReceiptField,
+  ReceiptLabels,
+  ReceiptEmailConfig,
+  ReceiptEmailParams,
+} from "./types/receipt";
+export type { GenerateReceiptResult } from "./utils/generateReceipt";
+export { generateReceiptPdf } from "./utils/generateReceipt";
 
 // Validation types
 export type {

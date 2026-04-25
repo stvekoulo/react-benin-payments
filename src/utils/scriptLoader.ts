@@ -24,33 +24,9 @@ export function loadScript(src: string, id: string): Promise<boolean> {
     const existingScript = document.getElementById(id) as HTMLScriptElement | null;
 
     if (existingScript) {
-      const scriptState = existingScript as HTMLScriptElement & {
-        readyState?: string;
-      };
-      const isAlreadyLoaded =
-        existingScript.dataset.loaded === "true" ||
-        scriptState.readyState === "complete";
-
-      if (isAlreadyLoaded) {
-        resolve(true);
-        return;
-      }
-
-      const handleLoad = () => {
-        existingScript.dataset.loaded = "true";
-        existingScript.removeEventListener("load", handleLoad);
-        existingScript.removeEventListener("error", handleError);
-        resolve(true);
-      };
-
-      const handleError = () => {
-        existingScript.removeEventListener("load", handleLoad);
-        existingScript.removeEventListener("error", handleError);
-        reject(new Error(`Failed to load script: ${src}`));
-      };
-
-      existingScript.addEventListener("load", handleLoad);
-      existingScript.addEventListener("error", handleError);
+      // Script already in the DOM — resolve immediately to avoid duplicates.
+      // We trust the existing element is either loaded or being loaded elsewhere.
+      resolve(true);
       return;
     }
 

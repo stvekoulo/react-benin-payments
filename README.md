@@ -23,6 +23,7 @@ Gère automatiquement le chargement des scripts, les modales de paiement et la v
 - **Auto-Verify** — Validation automatique via votre backend API
 - **Mock Mode** — Simulez des paiements en développement
 - **Hook Universel** — `useBeninPay` pour changer de provider dynamiquement
+- **Reçus PDF** — `usePaymentReceipt` génère des reçus PDF entièrement personnalisables et les envoie par email
 - **Messages d'erreur localisés** — UX optimisée pour les utilisateurs francophones
 
 ---
@@ -54,6 +55,7 @@ Gère automatiquement le chargement des scripts, les modales de paiement et la v
 - `Améliorations Architecturales` — sous-entrées `fedapay` / `kkiapay` pour un meilleur tree-shaking
 - `React 19 / RSC` — marqueurs `"use client"` explicites sur les modules React exposés
 - `usePaymentStatus` — support WebSocket en plus du polling
+- `usePaymentReceipt` — génération de reçus PDF avec design personnalisable (logo, couleurs, numérotation) et envoi automatique par email
 
 ---
 
@@ -421,6 +423,74 @@ function LivePaymentStatus({ transactionId }: { transactionId: string }) {
       <PaymentStatusBadge status={status} />
       {isPolling && <p>Écoute des mises à jour en temps réel...</p>}
     </div>
+  );
+}
+```
+
+### Reçus PDF avec `usePaymentReceipt`
+
+```tsx
+import { useFedaPay, usePaymentReceipt } from "react-benin-payments";
+
+function CheckoutWithReceipt() {
+  const { generateAndDownload, sendByEmail, isGenerating } = usePaymentReceipt({
+    // Branding
+    appName: "MonShop",
+    logo: "/logo.png",
+    appAddress: "Cotonou, Bénin",
+    appEmail: "contact@monshop.bj",
+    appWebsite: "https://monshop.bj",
+
+    // Numérotation
+    invoicePrefix: "CMD-",
+    invoiceNumber: (data) => `CMD-${data.transactionId.slice(-6).toUpperCase()}`,
+
+    // Design
+    primaryColor: "#22C55E",
+
+    // Champs supplémentaires
+    extraFields: [
+      { label: "Référence commande", value: "ORD-001" },
+    ],
+
+    // Envoi email automatique
+    email: {
+      sendFn: async ({ to, pdfBase64, filename, subject }) => {
+        await fetch("/api/send-receipt", {
+          method: "POST",
+          body: JSON.stringify({ to, pdfBase64, filename, subject }),
+        });
+      },
+      subject: (data) => `Votre reçu — ${data.transactionId}`,
+    },
+  });
+
+  const { openDialog } = useFedaPay({
+    transaction: { amount: 5000, description: "Abonnement Premium" },
+    onComplete: (response) => {
+      // Télécharge le reçu automatiquement
+      generateAndDownload({
+        transactionId: response.transaction.reference,
+        amount: response.transaction.amount,
+        status: "Approuvé",
+        customerName: "Jean Dupont",
+        customerEmail: "jean@example.com",
+        serviceName: "Abonnement Premium",
+      });
+
+      // OU envoie par email
+      sendByEmail("jean@example.com", {
+        transactionId: response.transaction.reference,
+        amount: response.transaction.amount,
+        status: "Approuvé",
+      });
+    },
+  });
+
+  return (
+    <button onClick={openDialog} disabled={isGenerating}>
+      {isGenerating ? "Génération du reçu..." : "Payer et recevoir le reçu"}
+    </button>
   );
 }
 ```

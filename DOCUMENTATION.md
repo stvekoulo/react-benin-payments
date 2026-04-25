@@ -12,11 +12,12 @@ Guide complet pour intégrer les paiements FedaPay et KKiaPay dans vos applicati
 4. [Configuration initiale](#configuration-initiale)
 5. [Utilisation de base](#utilisation-de-base)
 6. [Utilisation avancée](#utilisation-avancée)
-7. [Référence API](#référence-api)
-8. [Utilitaires](#utilitaires)
-9. [Gestion des erreurs](#gestion-des-erreurs)
-10. [Mode Test et Production](#mode-test-et-production)
-11. [FAQ](#faq)
+7. [Génération de reçus PDF](#génération-de-reçus-pdf)
+8. [Référence API](#référence-api)
+9. [Utilitaires](#utilitaires)
+10. [Gestion des erreurs](#gestion-des-erreurs)
+11. [Mode Test et Production](#mode-test-et-production)
+12. [FAQ](#faq)
 
 ---
 
@@ -74,6 +75,7 @@ Guide complet pour intégrer les paiements FedaPay et KKiaPay dans vos applicati
 - `Imports séparés` via `react-benin-payments/fedapay` et `react-benin-payments/kkiapay`
 - Compatibilité renforcée `React 19 / React Server Components` avec marqueurs `"use client"`
 - `usePaymentStatus` avec support `WebSocket` en plus du polling
+- `usePaymentReceipt` — génération de reçus PDF entièrement personnalisables avec envoi automatique par email
 
 ---
 
@@ -774,6 +776,327 @@ En mode mock :
 
 ---
 
+## Génération de reçus PDF
+
+Le hook `usePaymentReceipt` génère des reçus PDF professionnels directement dans le navigateur (côté client, sans serveur) à l'aide de [jsPDF](https://github.com/parallax/jsPDF). Le design, les textes et la numérotation sont entièrement contrôlés par votre configuration.
+
+### Cas d'usage courants
+
+| Méthode | Description |
+|---|---|
+| `generateAndDownload(data)` | Génère et déclenche le téléchargement PDF |
+| `generateBlob(data)` | Génère et retourne le Blob (upload, prévisualisation) |
+| `generateDataUrl(data)` | Génère et retourne le data URL base64 (affichage `<iframe>`) |
+| `sendByEmail(to, data)` | Génère et envoie par email via votre service |
+
+### Usage basique
+
+```tsx
+import { useFedaPay, usePaymentReceipt } from "react-benin-payments";
+
+function CheckoutButton() {
+  const { generateAndDownload } = usePaymentReceipt({
+    appName: "MonShop",
+    footerNote: "Merci pour votre achat !",
+  });
+
+  const { openDialog } = useFedaPay({
+    transaction: { amount: 5000, description: "Abonnement Premium" },
+    onComplete: (response) => {
+      generateAndDownload({
+        transactionId: response.transaction.reference,
+        amount: response.transaction.amount,
+        status: "Approuvé",
+        provider: "fedapay",
+      });
+    },
+  });
+
+  return <button onClick={openDialog}>Payer</button>;
+}
+```
+
+### Design personnalisé
+
+```tsx
+const { generateAndDownload } = usePaymentReceipt({
+  // Branding
+  appName: "MonShop",
+  logo: "/logo.png",            // URL publique ou image base64 (PNG / JPEG)
+  appDescription: "Boutique en ligne",
+  appAddress: "Cotonou, Bénin",
+  appEmail: "contact@monshop.bj",
+  appPhone: "+229 97 00 00 00",
+  appWebsite: "https://monshop.bj",
+
+  // Couleurs (valeurs hex)
+  primaryColor: "#22C55E",      // bande de titre, barre total, accents
+  secondaryColor: "#F0FDF4",    // fond des lignes alternées du tableau
+  textColor: "#14532D",         // texte principal
+
+  // Locale et devise
+  locale: "fr-BJ",
+  currency: "XOF",
+
+  // Libellés personnalisés (tous optionnels)
+  labels: {
+    receiptTitle: "FACTURE",
+    totalLabel: "MONTANT TOTAL",
+    thankYouNote: "Paiement reçu avec succès.",
+  },
+
+  // Pied de page
+  footerNote: "Conservez ce document comme preuve de paiement.",
+
+  // Nom du fichier téléchargé
+  filename: (data) => `facture-${data.transactionId}`,
+});
+```
+
+### Numérotation des factures
+
+```tsx
+const { generateAndDownload } = usePaymentReceipt({
+  invoicePrefix: "FAC-",                               // préfixe fixe
+  invoiceNumber: 1042,                                 // statique → "FAC-1042"
+
+  // OU dynamique (recommandé en production)
+  invoiceNumber: (data) => `FAC-${data.transactionId.slice(-6).toUpperCase()}`,
+});
+```
+
+### Champs personnalisés
+
+```tsx
+const { generateAndDownload } = usePaymentReceipt({
+  extraFields: [
+    { label: "Référence commande",  value: "ORD-456" },
+    { label: "Vendeur",             value: "Agence Nord" },
+    { label: "TVA (18%)",           value: (data) => `${(data.amount * 0.18).toFixed(0)} XOF` },
+    { label: "Canal",               value: "Mobile Money" },
+  ],
+});
+```
+
+### Données de transaction complètes
+
+```tsx
+generateAndDownload({
+  transactionId: "TXN-ABC123",    // affiché sur le reçu (obligatoire)
+  amount: 5000,                    // montant (obligatoire)
+  currency: "XOF",                 // remplace config.currency si fourni
+  status: "Approuvé",             // libellé du statut
+  date: new Date(),                // date (défaut: maintenant)
+  provider: "fedapay",            // "fedapay" ou "kkiapay"
+
+  // Informations client (section "À")
+  customerName: "Jean Dupont",
+  customerEmail: "jean@example.com",
+  customerPhone: "+229 97 00 00 00",
+
+  // Détails de la prestation
+  serviceName: "Abonnement Premium",
+  description: "Accès 12 mois — Plan Pro",
+
+  // Métadonnées (non affichées, disponibles dans onGenerated)
+  metadata: { orderId: "ORD-001", userId: "u_42" },
+});
+```
+
+### Envoi par email — Mode fonction
+
+Utilisez cette approche avec **Resend, SendGrid, Nodemailer** ou tout service de votre choix.
+
+```tsx
+const { sendByEmail } = usePaymentReceipt({
+  appName: "MonShop",
+  email: {
+    sendFn: async ({ to, subject, pdfBase64, filename }) => {
+      // Exemple avec Resend
+      await resend.emails.send({
+        from: "no-reply@monshop.bj",
+        to,
+        subject,
+        attachments: [{ filename, content: pdfBase64 }],
+      });
+    },
+    subject: (data) => `Votre reçu — ${data.transactionId}`,
+  },
+});
+
+// Dans le callback onComplete
+sendByEmail("client@example.com", {
+  transactionId: "TXN-ABC123",
+  amount: 5000,
+  customerName: "Jean Dupont",
+});
+```
+
+### Envoi par email — Mode URL (backend)
+
+Déléguez l'envoi à votre backend via un simple endpoint HTTP.
+
+```tsx
+const { sendByEmail } = usePaymentReceipt({
+  email: {
+    sendUrl: "/api/send-receipt",
+    sendHeaders: { Authorization: `Bearer ${token}` },
+    subject: "Votre reçu de paiement",
+    bodyHtml: (data) => `
+      <h1>Merci !</h1>
+      <p>Transaction <strong>${data.transactionId}</strong> confirmée.</p>
+    `,
+  },
+});
+```
+
+Le corps JSON envoyé à `sendUrl` :
+
+```json
+{
+  "to": "client@example.com",
+  "subject": "Votre reçu de paiement",
+  "pdfBase64": "JVBERi0xLjQ...",
+  "filename": "recu-TXN-ABC123.pdf",
+  "bodyHtml": "<h1>Merci !</h1>...",
+  "bodyText": null,
+  "transactionData": { "transactionId": "TXN-ABC123", "amount": 5000 }
+}
+```
+
+Exemple d'endpoint Next.js :
+
+```typescript
+// app/api/send-receipt/route.ts
+import { NextRequest, NextResponse } from "next/server";
+
+export async function POST(req: NextRequest) {
+  const { to, subject, pdfBase64, filename, bodyHtml } = await req.json();
+
+  // Avec Resend, SendGrid, Nodemailer, etc.
+  await mailer.send({
+    to,
+    subject,
+    html: bodyHtml,
+    attachments: [{ filename, content: Buffer.from(pdfBase64, "base64") }],
+  });
+
+  return NextResponse.json({ ok: true });
+}
+```
+
+### Prévisualisation dans le navigateur
+
+```tsx
+import { useState } from "react";
+import { usePaymentReceipt } from "react-benin-payments";
+
+function ReceiptPreview({ transactionData }) {
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const { generateDataUrl, isGenerating } = usePaymentReceipt({
+    appName: "MonShop",
+  });
+
+  const handlePreview = async () => {
+    const url = await generateDataUrl(transactionData);
+    if (url) setPdfUrl(url);
+  };
+
+  return (
+    <div>
+      <button onClick={handlePreview} disabled={isGenerating}>
+        {isGenerating ? "Génération..." : "Prévisualiser le reçu"}
+      </button>
+      {pdfUrl && (
+        <iframe
+          src={pdfUrl}
+          className="w-full h-[600px] border rounded-lg mt-4"
+          title="Reçu de paiement"
+        />
+      )}
+    </div>
+  );
+}
+```
+
+### Callback `onGenerated`
+
+```tsx
+const { generateBlob } = usePaymentReceipt({
+  appName: "MonShop",
+  autoDownload: false,              // ne pas télécharger automatiquement
+  onGenerated: async (blob, dataUrl) => {
+    // Uploader sur votre serveur
+    const form = new FormData();
+    form.append("receipt", blob, "recu.pdf");
+    await fetch("/api/receipts/upload", { method: "POST", body: form });
+  },
+});
+```
+
+### Intégration complète avec useBeninPay
+
+```tsx
+import { useBeninPay, usePaymentReceipt, usePaymentHistory } from "react-benin-payments";
+
+function FullCheckout() {
+  const { addToHistory } = usePaymentHistory({ storage: "local" });
+
+  const { generateAndDownload, sendByEmail } = usePaymentReceipt({
+    appName: "MonShop",
+    primaryColor: "#4E6BFF",
+    invoicePrefix: "FAC-",
+    email: {
+      sendFn: async ({ to, pdfBase64, filename }) => {
+        await fetch("/api/send-receipt", {
+          method: "POST",
+          body: JSON.stringify({ to, pdfBase64, filename }),
+        });
+      },
+    },
+  });
+
+  const { pay, loading } = useBeninPay(
+    {
+      provider: "fedapay",
+      fedapay: {
+        transaction: { amount: 5000, description: "Commande #123" },
+        customer: { email: "jean@example.com" },
+      },
+    },
+    {
+      onSuccess: async (result) => {
+        // 1. Enregistre dans l'historique
+        addToHistory(result, "fedapay");
+
+        const receiptData = {
+          transactionId: result.transactionId,
+          amount: result.amount,
+          status: "Approuvé",
+          customerEmail: "jean@example.com",
+          serviceName: "Commande #123",
+          provider: "fedapay" as const,
+        };
+
+        // 2. Télécharge le reçu
+        await generateAndDownload(receiptData);
+
+        // 3. Envoie par email
+        await sendByEmail("jean@example.com", receiptData);
+      },
+    }
+  );
+
+  return (
+    <button onClick={pay} disabled={loading}>
+      Payer
+    </button>
+  );
+}
+```
+
+---
+
 ## Référence API
 
 ### BeninPaymentProvider
@@ -1064,6 +1387,151 @@ interface PaymentHistoryEntry extends UnifiedPaymentResult {
 }
 ```
 
+### usePaymentReceipt
+
+```tsx
+function usePaymentReceipt(config?: ReceiptConfig): UsePaymentReceiptReturn;
+
+interface UsePaymentReceiptReturn {
+  /** Génère le PDF et déclenche le téléchargement dans le navigateur */
+  generateAndDownload: (data: ReceiptTransactionData) => Promise<GenerateReceiptResult | null>;
+
+  /** Génère le PDF sans téléchargement — retourne le Blob */
+  generateBlob: (data: ReceiptTransactionData) => Promise<Blob | null>;
+
+  /** Génère le PDF sans téléchargement — retourne le data URL base64 */
+  generateDataUrl: (data: ReceiptTransactionData) => Promise<string | null>;
+
+  /** Génère et envoie par email (nécessite config.email) */
+  sendByEmail: (to: string, data: ReceiptTransactionData) => Promise<void>;
+
+  /** true pendant la génération du PDF */
+  isGenerating: boolean;
+
+  /** true pendant l'envoi de l'email */
+  isSending: boolean;
+
+  /** Dernière erreur survenue */
+  error: Error | null;
+
+  /** Efface l'erreur courante */
+  clearError: () => void;
+}
+
+interface ReceiptTransactionData {
+  transactionId: string;           // Identifiant de la transaction (obligatoire)
+  amount: number;                  // Montant (obligatoire)
+  currency?: "XOF" | "USD" | "EUR";
+  status?: string;                 // Ex: "Approuvé", "Succès"
+  date?: string | Date;            // Défaut : maintenant
+  customerName?: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  serviceName?: string;
+  description?: string;
+  provider?: "fedapay" | "kkiapay";
+  metadata?: Record<string, unknown>;
+}
+
+interface ReceiptConfig {
+  // ── Branding ──────────────────────────────────────────────────────────
+  logo?: string;                   // URL ou base64 PNG/JPEG
+  appName?: string;
+  appDescription?: string;
+  appAddress?: string;
+  appEmail?: string;
+  appPhone?: string;
+  appWebsite?: string;
+
+  // ── Numérotation ──────────────────────────────────────────────────────
+  invoicePrefix?: string;          // Défaut: "FAC-"
+  invoiceNumber?: string | number | ((data: ReceiptTransactionData) => string | number);
+
+  // ── Champs supplémentaires ────────────────────────────────────────────
+  extraFields?: ReceiptField[];    // Lignes additionnelles dans le tableau
+
+  // ── Design ────────────────────────────────────────────────────────────
+  primaryColor?: string;           // Hex — défaut: "#4E6BFF"
+  secondaryColor?: string;         // Hex — défaut: "#EEF2FF"
+  textColor?: string;              // Hex — défaut: "#1A1A2E"
+
+  // ── Localisation ──────────────────────────────────────────────────────
+  locale?: string;                 // BCP 47 — défaut: "fr-BJ"
+  currency?: "XOF" | "USD" | "EUR";
+  labels?: Partial<ReceiptLabels>; // Redéfinir n'importe quel libellé
+
+  // ── Sortie ────────────────────────────────────────────────────────────
+  footerNote?: string;
+  filename?: string | ((data: ReceiptTransactionData) => string);
+  autoDownload?: boolean;          // Défaut: true
+
+  // ── Callbacks ─────────────────────────────────────────────────────────
+  onGenerated?: (blob: Blob, dataUrl: string) => void;
+
+  // ── Email ──────────────────────────────────────────────────────��──────
+  email?: ReceiptEmailConfig;
+}
+
+interface ReceiptField {
+  label: string;
+  value: string | number | ((data: ReceiptTransactionData) => string | number);
+}
+
+interface ReceiptLabels {
+  receiptTitle: string;         // Défaut: "REÇU DE PAIEMENT"
+  invoiceNumberLabel: string;   // Défaut: "N° Facture"
+  transactionIdLabel: string;   // Défaut: "ID Transaction"
+  amountLabel: string;          // Défaut: "Montant"
+  dateLabel: string;            // Défaut: "Date"
+  statusLabel: string;          // Défaut: "Statut"
+  fromLabel: string;            // Défaut: "DE"
+  toLabel: string;              // Défaut: "À"
+  serviceLabel: string;         // Défaut: "Service"
+  descriptionLabel: string;     // Défaut: "Description"
+  totalLabel: string;           // Défaut: "TOTAL"
+  thankYouNote: string;         // Défaut: "Merci pour votre paiement."
+}
+
+interface ReceiptEmailConfig {
+  sendFn?: (params: ReceiptEmailParams) => Promise<void>; // Fonction personnalisée
+  sendUrl?: string;                                       // OU endpoint HTTP (POST)
+  sendHeaders?: Record<string, string>;
+  subject?: string | ((data: ReceiptTransactionData) => string);
+  bodyHtml?: string | ((data: ReceiptTransactionData) => string);
+  bodyText?: string | ((data: ReceiptTransactionData) => string);
+}
+
+interface ReceiptEmailParams {
+  to: string;
+  subject: string;
+  pdfBase64: string;
+  pdfBlob: Blob;
+  filename: string;
+  transactionData: ReceiptTransactionData;
+}
+
+interface GenerateReceiptResult {
+  blob: Blob;
+  dataUrl: string;        // "data:application/pdf;base64,..."
+  filename: string;       // Nom du fichier sans extension
+}
+```
+
+#### Valeur par défaut des libellés
+
+| Libellé | Valeur par défaut |
+|---|---|
+| `receiptTitle` | `"REÇU DE PAIEMENT"` |
+| `invoiceNumberLabel` | `"N° Facture"` |
+| `transactionIdLabel` | `"ID Transaction"` |
+| `dateLabel` | `"Date"` |
+| `statusLabel` | `"Statut"` |
+| `fromLabel` | `"DE"` |
+| `toLabel` | `"À"` |
+| `serviceLabel` | `"Service"` |
+| `totalLabel` | `"TOTAL"` |
+| `thankYouNote` | `"Merci pour votre paiement."` |
+
 ### Analytics
 
 ```tsx
@@ -1295,6 +1763,47 @@ Puis utilisez le bouton ou hook approprié selon vos besoins.
 ### Comment gérer les webhooks ?
 
 Les webhooks sont gérés côté serveur, indépendamment de cette librairie. Consultez la documentation de FedaPay et KKiaPay pour configurer vos endpoints webhook.
+
+### Le reçu PDF peut-il être généré côté serveur ?
+
+`usePaymentReceipt` est un hook React qui s'exécute côté client (navigateur). Si vous souhaitez générer le PDF côté serveur, utilisez directement la fonction utilitaire `generateReceiptPdf` :
+
+```typescript
+import { generateReceiptPdf } from "react-benin-payments";
+
+const { blob, dataUrl, filename } = await generateReceiptPdf(
+  { transactionId: "TXN-123", amount: 5000 },
+  { appName: "MonShop" }
+);
+```
+
+Notez que jsPDF est une librairie browser-first. Pour une génération serveur robuste, envisagez `@react-pdf/renderer` ou Puppeteer.
+
+### Le logo du reçu ne s'affiche pas
+
+Vérifiez que :
+1. L'URL est publiquement accessible (pas de CORS bloquant)
+2. Le fichier est un PNG ou JPEG valide
+3. Si vous utilisez une base64, elle doit commencer par `data:image/png;base64,` ou `data:image/jpeg;base64,`
+
+Alternativement, passez directement une image base64 pour éviter les requêtes réseau :
+
+```tsx
+import logoBase64 from "./logo.png?base64"; // Vite
+usePaymentReceipt({ logo: `data:image/png;base64,${logoBase64}` });
+```
+
+### L'envoi d'email échoue silencieusement
+
+Vérifiez l'état `error` retourné par le hook :
+
+```tsx
+const { sendByEmail, error } = usePaymentReceipt({ email: { ... } });
+
+if (error) console.error("Erreur envoi reçu :", error.message);
+```
+
+En mode `sendUrl`, l'endpoint doit retourner un statut HTTP `2xx` ; tout autre statut lève une erreur.
 
 ---
 

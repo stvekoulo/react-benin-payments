@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { createLogger } from "../utils/logger";
 import { useBeninConfig } from "../context";
 
@@ -205,6 +205,13 @@ export function usePaymentStatus(
   const isPollingRef = useRef(enabled);
   const webSocketRef = useRef<PaymentStatusWebSocketLike | null>(null);
 
+  // Stabilise les callbacks passés en props pour éviter des re-runs d'effet inutiles
+  // lorsque l'appelant crée des fonctions inline (nouvelle référence à chaque render).
+  const websocketFactoryRef = useRef(websocketFactory) as MutableRefObject<typeof websocketFactory>;
+  websocketFactoryRef.current = websocketFactory;
+  const parseWebSocketMessageRef = useRef(parseWebSocketMessage) as MutableRefObject<typeof parseWebSocketMessage>;
+  parseWebSocketMessageRef.current = parseWebSocketMessage;
+
   useEffect(() => {
     isPollingRef.current = isPolling;
   }, [isPolling]);
@@ -290,7 +297,8 @@ export function usePaymentStatus(
 
   const resolveWebSocketStatus = useCallback(
     (event: MessageEvent): TransactionStatus | null => {
-      const parsed = parseWebSocketMessage?.(event);
+      // Lit depuis le ref pour éviter de recréer ce callback quand parseWebSocketMessage change.
+      const parsed = parseWebSocketMessageRef.current?.(event);
 
       if (typeof parsed === "string") {
         return parsed;
@@ -318,7 +326,9 @@ export function usePaymentStatus(
 
       return null;
     },
-    [parseWebSocketMessage]
+    // parseWebSocketMessageRef est stable — pas besoin de l'ajouter ici.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
   );
 
   useEffect(() => {
@@ -327,8 +337,9 @@ export function usePaymentStatus(
     if (transport === "websocket") {
       if (!websocketUrl) return;
 
+      // Lit depuis le ref pour éviter de recréer la socket quand le callback change de référence.
       const createSocket =
-        websocketFactory ??
+        websocketFactoryRef.current ??
         ((url: string, protocols?: string | string[]) =>
           new WebSocket(url, protocols) as unknown as PaymentStatusWebSocketLike);
 
@@ -373,18 +384,24 @@ export function usePaymentStatus(
 
     if (!checkUrl) return;
 
-    // Initial check immediately
-    checkStatus();
+    // Différer la première vérification via setTimeout pour que les appels
+    // synchrones (ex: startPolling dans act()) voient attempts=0 avant le premier check.
+    const immediateId = setTimeout(() => {
+      if (isPollingRef.current) void checkStatus();
+    }, 0);
 
     const intervalId = setInterval(() => {
       if (!isPollingRef.current) {
         clearInterval(intervalId);
         return;
       }
-      checkStatus();
+      void checkStatus();
     }, pollInterval);
 
-    return () => clearInterval(intervalId);
+    return () => {
+      clearTimeout(immediateId);
+      clearInterval(intervalId);
+    };
   }, [
     isPolling,
     transactionId,
@@ -393,8 +410,8 @@ export function usePaymentStatus(
     checkStatus,
     transport,
     websocketUrl,
+    // websocketFactory et parseWebSocketMessage sont lus via refs — pas dans les deps.
     websocketProtocols,
-    websocketFactory,
     resolveWebSocketStatus,
     applyStatus,
     log,
