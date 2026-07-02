@@ -1,4 +1,5 @@
 import type { VerificationConfig, VerificationResponse, VerifyMethod } from "../types";
+import type { PaymentProviderId } from "../core/types";
 
 /**
  * Payload sent to the verification endpoint.
@@ -8,20 +9,33 @@ export interface VerifyPayload {
   transactionId: string;
   /** Amount that was charged */
   amount: number;
-  /** Payment provider used */
-  provider: "fedapay" | "kkiapay";
+  /** Payment provider used — `"fedapay"` / `"kkiapay"`, or a custom driver's identifier */
+  provider: PaymentProviderId;
   /** Additional metadata */
   metadata?: Record<string, unknown>;
 }
 
 /**
+ * Thrown when backend verification fails. `isBackendMessage` tells callers
+ * whether `message` is text your own `verifyUrl` endpoint returned (and
+ * should therefore be shown to the user exactly as written) or a generic
+ * fallback/network message that's safe to run through further translation.
+ */
+export class VerificationError extends Error {
+  constructor(message: string, public readonly isBackendMessage: boolean) {
+    super(message);
+    this.name = "VerificationError";
+  }
+}
+
+/**
  * Verifies a transaction with the backend.
- * 
+ *
  * @param config - Verification configuration
  * @param payload - Transaction data to verify
  * @returns Verification response from the backend
- * @throws Error if verification fails or network error occurs
- * 
+ * @throws {VerificationError} if verification fails or network error occurs
+ *
  * @example
  * ```ts
  * const result = await verifyTransaction(
@@ -65,17 +79,19 @@ export async function verifyTransaction(
 
   if (!response.ok) {
     let errorMessage = `Verification failed with status ${response.status}`;
-    
+    let isBackendMessage = false;
+
     try {
       const errorData = await response.json();
       if (errorData.message) {
         errorMessage = errorData.message;
+        isBackendMessage = true;
       }
     } catch {
       // Response is not JSON, use default message
     }
-    
-    throw new Error(errorMessage);
+
+    throw new VerificationError(errorMessage, isBackendMessage);
   }
 
   const data = await response.json();

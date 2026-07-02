@@ -8,6 +8,8 @@ import {
 } from "react";
 import type { Currency } from "../types";
 import type { BeninPaymentAnalyticsHandler } from "../utils/analytics";
+import type { ErrorMessageResolver, PaymentMessageOverrides } from "../types/validation";
+import type { EnvironmentWarningMessages } from "../utils/keyValidator";
 
 /**
  * Global configuration for Benin Payment providers.
@@ -46,6 +48,24 @@ export interface BeninPaymentConfig {
    * Global analytics callback for standardized payment events.
    */
   onAnalyticsEvent?: BeninPaymentAnalyticsHandler;
+  /**
+   * Overrides the wording of built-in validation error messages
+   * (missing key, invalid amount, SDK not loaded...) for every hook.
+   * Can be refined per-hook via `useFedaPay`/`useKkiaPay` options.
+   */
+  messages?: PaymentMessageOverrides;
+  /**
+   * Resolves the message for arbitrary caught errors (SDK load failures,
+   * network errors...) surfaced via a hook's `error` state. Falls back to
+   * the built-in French translations when it returns `undefined`.
+   */
+  resolveErrorMessage?: ErrorMessageResolver;
+  /**
+   * Overrides the wording of dev-time console warnings (live key used in
+   * sandbox mode, etc.) for every hook. Can be refined per-hook via
+   * `useFedaPay`/`useKkiaPay` options.
+   */
+  environmentWarnings?: EnvironmentWarningMessages;
 }
 
 /**
@@ -58,6 +78,9 @@ interface BeninPaymentContextValue {
   isTestMode: boolean;
   debug: boolean;
   onAnalyticsEvent?: BeninPaymentAnalyticsHandler;
+  messages?: PaymentMessageOverrides;
+  resolveErrorMessage?: ErrorMessageResolver;
+  environmentWarnings?: EnvironmentWarningMessages;
   isProviderMounted: boolean;
 }
 
@@ -116,6 +139,9 @@ export function BeninPaymentProvider({
   isTestMode = false,
   debug = false,
   onAnalyticsEvent,
+  messages,
+  resolveErrorMessage,
+  environmentWarnings,
   children,
 }: BeninPaymentProviderProps) {
   const value = useMemo<BeninPaymentContextValue>(
@@ -126,9 +152,22 @@ export function BeninPaymentProvider({
       isTestMode,
       debug,
       onAnalyticsEvent,
+      messages,
+      resolveErrorMessage,
+      environmentWarnings,
       isProviderMounted: true,
     }),
-    [fedaPayPublicKey, kkiaPayPublicKey, defaultCurrency, isTestMode, debug, onAnalyticsEvent]
+    [
+      fedaPayPublicKey,
+      kkiaPayPublicKey,
+      defaultCurrency,
+      isTestMode,
+      debug,
+      onAnalyticsEvent,
+      messages,
+      resolveErrorMessage,
+      environmentWarnings,
+    ]
   );
 
   return (

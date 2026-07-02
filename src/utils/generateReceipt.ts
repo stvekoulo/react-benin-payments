@@ -1,10 +1,18 @@
-import { jsPDF } from "jspdf";
 import type {
   ReceiptConfig,
   ReceiptTransactionData,
   ReceiptLabels,
 } from "../types/receipt";
 import type { Currency } from "../types";
+import type { PaymentProviderId } from "../core/types";
+import { blobToDataUrl, triggerBlobDownload } from "./pdfHelpers";
+
+/** Nice display name for the two built-in providers; any other driver's identifier is shown as-is. */
+export function formatProviderName(provider: PaymentProviderId): string {
+  if (provider === "fedapay") return "FedaPay";
+  if (provider === "kkiapay") return "KKiaPay";
+  return provider;
+}
 
 const DEFAULT_LABELS: ReceiptLabels = {
   receiptTitle: "REÇU DE PAIEMENT",
@@ -22,8 +30,11 @@ const DEFAULT_LABELS: ReceiptLabels = {
 };
 
 const DEFAULT_PRIMARY = "#4E6BFF";
-const DEFAULT_SECONDARY = "#EEF2FF";
-const DEFAULT_TEXT = "#1A1A2E";
+// Neutral hairline/rule color — kept configurable via `secondaryColor` for
+// brand consistency, but no longer used as a loud background fill.
+const DEFAULT_SECONDARY = "#E4E4E7";
+const DEFAULT_TEXT = "#18181B";
+const MUTED_TEXT: [number, number, number] = [113, 113, 122];
 
 function hexToRgb(hex: string): [number, number, number] {
   const clean = hex.replace("#", "");
@@ -34,13 +45,27 @@ function hexToRgb(hex: string): [number, number, number] {
   return [r, g, b];
 }
 
+/**
+ * jsPDF's built-in fonts (Helvetica) only cover the WinAnsi range. `Intl`
+ * formatters commonly insert narrow/no-break spaces (e.g. as a thousands
+ * separator) that fall outside it and render as garbled glyphs — normalize
+ * them to a plain space before handing text to jsPDF.
+ */
+function toPdfSafeText(text: string): string {
+  // U+00A0 no-break space, U+2007 figure space, U+2009 thin space,
+  // U+200A hair space, U+202F narrow no-break space.
+  return text.replace(/[\u00A0\u2007\u2009\u200A\u202F]/g, " ");
+}
+
 function formatAmount(amount: number, currency: Currency, locale: string): string {
   try {
-    return new Intl.NumberFormat(locale, {
-      style: "currency",
-      currency,
-      minimumFractionDigits: 0,
-    }).format(amount);
+    return toPdfSafeText(
+      new Intl.NumberFormat(locale, {
+        style: "currency",
+        currency,
+        minimumFractionDigits: 0,
+      }).format(amount)
+    );
   } catch {
     return `${amount.toLocaleString(locale)} ${currency}`;
   }
@@ -49,13 +74,15 @@ function formatAmount(amount: number, currency: Currency, locale: string): strin
 function formatDate(date: string | Date | undefined, locale: string): string {
   const d = date ? new Date(date) : new Date();
   try {
-    return new Intl.DateTimeFormat(locale, {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(d);
+    return toPdfSafeText(
+      new Intl.DateTimeFormat(locale, {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(d)
+    );
   } catch {
     return d.toLocaleDateString();
   }
@@ -87,12 +114,7 @@ function resolveFilename(
 async function fetchImageAsBase64(url: string): Promise<string> {
   const response = await fetch(url);
   const blob = await response.blob();
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
+  return blobToDataUrl(blob);
 }
 
 export interface GenerateReceiptResult {
@@ -102,12 +124,247 @@ export interface GenerateReceiptResult {
   filename: string;
 }
 
+/** Résultat interne d'un rendu (par défaut ou personnalisé), avant résolution du nom de fichier / data URL. */
+interface RenderedPdf {
+  blob: Blob;
+  dataUrl?: string;
+  filename?: string;
+}
+
+/**
+ * Génère le reçu PDF par défaut avec jsPDF.
+ *
+ * jsPDF est chargé dynamiquement — il n'est requis (et donc installé) que si
+ * `config.renderPdf` n'est pas fourni. C'est un peer dependency optionnel :
+ * `npm install jspdf`.
+ */
+async function renderDefaultPdf(
+  data: ReceiptTransactionData,
+  config: ReceiptConfig
+): Promise<RenderedPdf> {
+  let jsPDF: (typeof import("jspdf"))["jsPDF"];
+  try {
+    ({ jsPDF } = await import("jspdf"));
+  } catch {
+    throw new Error(
+      "Le générateur de reçu par défaut nécessite jsPDF. Exécutez `npm install jspdf`, " +
+        "ou fournissez `config.renderPdf` pour utiliser votre propre générateur de PDF."
+    );
+  }
+
+  const locale = config.locale ?? "fr-BJ";
+  const currency: Currency = data.currency ?? config.currency ?? "XOF";
+  const labels: ReceiptLabels = { ...DEFAULT_LABELS, ...config.labels };
+
+  const [pr, pg, pb] = hexToRgb(config.primaryColor ?? DEFAULT_PRIMARY);
+  const [lr, lg, lb] = hexToRgb(config.secondaryColor ?? DEFAULT_SECONDARY);
+  const [tr, tg, tb] = hexToRgb(config.textColor ?? DEFAULT_TEXT);
+  const [mr, mg, mb] = MUTED_TEXT;
+
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  const PAGE_W = 210;
+  const MARGIN = 20;
+  const CONTENT_W = PAGE_W - MARGIN * 2;
+
+  const hairline = (y: number, weight = 0.25) => {
+    doc.setDrawColor(lr, lg, lb);
+    doc.setLineWidth(weight);
+    doc.line(MARGIN, y, PAGE_W - MARGIN, y);
+  };
+
+  // Thin brand-colored bar at the very top edge — the only block of color on
+  // the page. Everything else relies on whitespace, hairlines and typography.
+  doc.setFillColor(pr, pg, pb);
+  doc.rect(0, 0, PAGE_W, 2.5, "F");
+
+  const headerTop = 14;
+
+  // Logo + company identity (left)
+  let leftX = MARGIN;
+  if (config.logo) {
+    try {
+      let logoData = config.logo;
+      if (config.logo.startsWith("http")) {
+        logoData = await fetchImageAsBase64(config.logo);
+      }
+      const imgType = logoData.includes("data:image/jpeg") ? "JPEG" : "PNG";
+      doc.addImage(logoData, imgType, MARGIN, headerTop, 16, 16);
+      leftX = MARGIN + 16 + 6;
+    } catch {
+      // Logo unavailable — continue without it.
+    }
+  }
+
+  let leftY = headerTop + 4;
+  if (config.appName) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(13);
+    doc.setTextColor(tr, tg, tb);
+    doc.text(config.appName, leftX, leftY);
+    leftY += 6;
+  }
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(8.5);
+  doc.setTextColor(mr, mg, mb);
+  for (const line of [
+    config.appDescription,
+    config.appAddress,
+    config.appEmail,
+    config.appPhone,
+    config.appWebsite,
+  ]) {
+    if (line) {
+      doc.text(line, leftX, leftY);
+      leftY += 4.5;
+    }
+  }
+
+  // Title + invoice number + date (right)
+  const invoiceNum = resolveInvoiceNumber(config, data);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(mr, mg, mb);
+  doc.text(labels.receiptTitle.toUpperCase(), PAGE_W - MARGIN, headerTop + 4, { align: "right" });
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(9.5);
+  doc.setTextColor(tr, tg, tb);
+  doc.text(`${labels.invoiceNumberLabel} ${invoiceNum}`, PAGE_W - MARGIN, headerTop + 11, {
+    align: "right",
+  });
+  doc.setFontSize(8.5);
+  doc.setTextColor(mr, mg, mb);
+  doc.text(formatDate(data.date, locale), PAGE_W - MARGIN, headerTop + 16.5, { align: "right" });
+
+  let y = Math.max(leftY, headerTop + 22) + 5;
+  hairline(y);
+  y += 9;
+
+  // From / To
+  const midX = MARGIN + CONTENT_W / 2 + 4;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.5);
+  doc.setTextColor(mr, mg, mb);
+  doc.text(labels.fromLabel.toUpperCase(), MARGIN, y);
+  doc.text(labels.toLabel.toUpperCase(), midX, y);
+  y += 5.5;
+
+  doc.setFontSize(9.5);
+  let fromY = y;
+  let toY = y;
+
+  if (config.appName) {
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(tr, tg, tb);
+    doc.text(config.appName, MARGIN, fromY);
+    fromY += 5;
+  }
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(mr, mg, mb);
+  for (const line of [config.appAddress, config.appEmail, config.appPhone].filter(Boolean) as string[]) {
+    doc.text(line, MARGIN, fromY);
+    fromY += 5;
+  }
+
+  if (data.customerName) {
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(tr, tg, tb);
+    doc.text(data.customerName, midX, toY);
+    toY += 5;
+  }
+  doc.setFont("helvetica", "normal");
+  doc.setTextColor(mr, mg, mb);
+  for (const line of [data.customerEmail, data.customerPhone].filter(Boolean) as string[]) {
+    doc.text(line, midX, toY);
+    toY += 5;
+  }
+
+  y = Math.max(fromY, toY) + 7;
+  hairline(y);
+  y += 8;
+
+  // Transaction details
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(8);
+  doc.setTextColor(pr, pg, pb);
+  doc.text("DÉTAILS DE LA TRANSACTION", MARGIN, y);
+  y += 7;
+
+  const rows: Array<{ label: string; value: string }> = [];
+  rows.push({ label: labels.transactionIdLabel, value: data.transactionId });
+  rows.push({ label: labels.dateLabel, value: formatDate(data.date, locale) });
+  if (data.serviceName) rows.push({ label: labels.serviceLabel, value: data.serviceName });
+  if (data.description) rows.push({ label: labels.descriptionLabel, value: data.description });
+  if (data.provider) {
+    rows.push({ label: "Fournisseur", value: formatProviderName(data.provider) });
+  }
+  if (data.status) rows.push({ label: labels.statusLabel, value: data.status });
+  if (config.extraFields) {
+    for (const field of config.extraFields) {
+      const val = typeof field.value === "function" ? field.value(data) : field.value;
+      rows.push({ label: field.label, value: String(val) });
+    }
+  }
+
+  const ROW_H = 8;
+  const LABEL_COL_W = 62;
+
+  rows.forEach((row, i) => {
+    const rowTop = y + i * ROW_H;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(mr, mg, mb);
+    doc.text(row.label, MARGIN, rowTop + 5);
+
+    doc.setFontSize(9.5);
+    doc.setTextColor(tr, tg, tb);
+    doc.text(row.value, MARGIN + LABEL_COL_W, rowTop + 5);
+
+    hairline(rowTop + ROW_H, 0.2);
+  });
+
+  y += rows.length * ROW_H + 10;
+
+  // Total — emphasized with size and the brand color, not a filled block.
+  hairline(y, 0.5);
+  y += 9;
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(mr, mg, mb);
+  doc.text(labels.totalLabel, MARGIN, y);
+  doc.setFontSize(17);
+  doc.setTextColor(pr, pg, pb);
+  doc.text(formatAmount(data.amount, currency, locale), PAGE_W - MARGIN, y, { align: "right" });
+  y += 14;
+
+  const footerNote = config.footerNote ?? labels.thankYouNote;
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(8.5);
+  doc.setTextColor(mr, mg, mb);
+  doc.text(footerNote, PAGE_W / 2, y, { align: "center" });
+
+  // Footer
+  hairline(280);
+  if (config.appWebsite) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(mr, mg, mb);
+    doc.text(config.appWebsite, PAGE_W / 2, 286, { align: "center" });
+  }
+
+  return {
+    blob: doc.output("blob"),
+    dataUrl: doc.output("datauristring"),
+  };
+}
+
 /**
  * Génère un reçu PDF à partir des données de transaction et d'une configuration
  * optionnelle de mise en page.
  *
- * Cette fonction peut être utilisée directement (côté client ou SSR) ou via le
- * hook `usePaymentReceipt` qui gère les états React (loading, error).
+ * Par défaut, utilise un template jsPDF minimaliste (chargé à la demande —
+ * `npm install jspdf` requis). Fournissez `config.renderPdf` pour remplacer
+ * entièrement ce rendu par le vôtre ; le téléchargement, le data URL et
+ * l'envoi par email continuent de fonctionner à l'identique.
  *
  * @param data   Données de la transaction (ID, montant, client…)
  * @param config Configuration du design et du contenu du reçu
@@ -117,217 +374,18 @@ export async function generateReceiptPdf(
   data: ReceiptTransactionData,
   config: ReceiptConfig = {}
 ): Promise<GenerateReceiptResult> {
-  const locale = config.locale ?? "fr-BJ";
-  const currency: Currency = data.currency ?? config.currency ?? "XOF";
-  const labels: ReceiptLabels = { ...DEFAULT_LABELS, ...config.labels };
+  const rendered: RenderedPdf = config.renderPdf
+    ? await config.renderPdf(data, config)
+    : await renderDefaultPdf(data, config);
 
-  const [pr, pg, pb] = hexToRgb(config.primaryColor ?? DEFAULT_PRIMARY);
-  const [sr, sg, sb] = hexToRgb(config.secondaryColor ?? DEFAULT_SECONDARY);
-  const [tr, tg, tb] = hexToRgb(config.textColor ?? DEFAULT_TEXT);
-
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-  const PAGE_W = 210;
-  const MARGIN = 20;
-  const CONTENT_W = PAGE_W - MARGIN * 2;
-
-  doc.setFillColor(pr, pg, pb);
-  doc.rect(0, 0, PAGE_W, 50, "F");
-
-  // Logo
-  let logoEndX = MARGIN;
-  if (config.logo) {
-    try {
-      let logoData = config.logo;
-      if (config.logo.startsWith("http")) {
-        logoData = await fetchImageAsBase64(config.logo);
-      }
-      const imgType = logoData.includes("data:image/jpeg") ? "JPEG" : "PNG";
-      doc.addImage(logoData, imgType, MARGIN, 9, 28, 28);
-      logoEndX = MARGIN + 33;
-    } catch {
-      // Logo non disponible — on continue sans
-    }
-  }
-
-  // Nom et infos de l'application (blanc, côté gauche)
-  doc.setTextColor(255, 255, 255);
-  let headerY = 19;
-  if (config.appName) {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text(config.appName, logoEndX, headerY);
-    headerY += 7;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-  }
-  const headerLines: string[] = [];
-  if (config.appDescription) headerLines.push(config.appDescription);
-  if (config.appAddress) headerLines.push(config.appAddress);
-  if (config.appEmail) headerLines.push(config.appEmail);
-  if (config.appPhone) headerLines.push(config.appPhone);
-  if (config.appWebsite) headerLines.push(config.appWebsite);
-  for (const line of headerLines) {
-    doc.text(line, logoEndX, headerY);
-    headerY += 5.5;
-  }
-
-  // Titre du reçu + numéro de facture (blanc, côté droit)
-  const invoiceNum = resolveInvoiceNumber(config, data);
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(14);
-  doc.text(labels.receiptTitle, PAGE_W - MARGIN, 19, { align: "right" });
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(9);
-  doc.text(
-    `${labels.invoiceNumberLabel}: ${invoiceNum}`,
-    PAGE_W - MARGIN,
-    28,
-    { align: "right" }
-  );
-  doc.text(formatDate(data.date, locale), PAGE_W - MARGIN, 36, {
-    align: "right",
-  });
-
-  let y = 58;
-
-  const midX = MARGIN + CONTENT_W / 2 + 4;
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(8);
-  doc.setTextColor(pr, pg, pb);
-  doc.text(labels.fromLabel, MARGIN, y);
-  doc.text(labels.toLabel, midX, y);
-
-  y += 6;
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(10);
-  doc.setTextColor(tr, tg, tb);
-
-  let fromY = y;
-  let toY = y;
-
-  if (config.appName) {
-    doc.setFont("helvetica", "bold");
-    doc.text(config.appName, MARGIN, fromY);
-    fromY += 6;
-    doc.setFont("helvetica", "normal");
-  }
-  for (const line of [config.appAddress, config.appEmail, config.appPhone].filter(Boolean) as string[]) {
-    doc.text(line, MARGIN, fromY);
-    fromY += 6;
-  }
-
-  if (data.customerName) {
-    doc.setFont("helvetica", "bold");
-    doc.text(data.customerName, midX, toY);
-    toY += 6;
-    doc.setFont("helvetica", "normal");
-  }
-  for (const line of [data.customerEmail, data.customerPhone].filter(Boolean) as string[]) {
-    doc.text(line, midX, toY);
-    toY += 6;
-  }
-
-  y = Math.max(fromY, toY) + 6;
-
-  // Séparateur
-  doc.setDrawColor(220, 220, 235);
-  doc.setLineWidth(0.3);
-  doc.line(MARGIN, y, PAGE_W - MARGIN, y);
-  y += 8;
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10);
-  doc.setTextColor(pr, pg, pb);
-  doc.text("DÉTAILS DE LA TRANSACTION", MARGIN, y);
-  y += 6;
-
-  const rows: Array<{ label: string; value: string }> = [];
-  rows.push({ label: labels.transactionIdLabel, value: data.transactionId });
-  rows.push({ label: labels.dateLabel, value: formatDate(data.date, locale) });
-  if (data.serviceName) {
-    rows.push({ label: labels.serviceLabel, value: data.serviceName });
-  }
-  if (data.description) {
-    rows.push({ label: labels.descriptionLabel, value: data.description });
-  }
-  if (data.provider) {
-    rows.push({
-      label: "Fournisseur",
-      value: data.provider === "fedapay" ? "FedaPay" : "KKiaPay",
-    });
-  }
-  if (data.status) {
-    rows.push({ label: labels.statusLabel, value: data.status });
-  }
-  if (config.extraFields) {
-    for (const field of config.extraFields) {
-      const val =
-        typeof field.value === "function" ? field.value(data) : field.value;
-      rows.push({ label: field.label, value: String(val) });
-    }
-  }
-
-  const ROW_H = 9;
-  const LABEL_COL_W = 65;
-
-  rows.forEach((row, i) => {
-    const rowTop = y + i * ROW_H;
-    if (i % 2 === 0) {
-      doc.setFillColor(sr, sg, sb);
-      doc.rect(MARGIN, rowTop, CONTENT_W, ROW_H, "F");
-    }
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8.5);
-    doc.setTextColor(110, 110, 130);
-    doc.text(row.label, MARGIN + 3, rowTop + ROW_H - 2.5);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9.5);
-    doc.setTextColor(tr, tg, tb);
-    doc.text(row.value, MARGIN + LABEL_COL_W, rowTop + ROW_H - 2.5);
-  });
-
-  y += rows.length * ROW_H + 4;
-
-  doc.setFillColor(pr, pg, pb);
-  doc.rect(MARGIN, y, CONTENT_W, 13, "F");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.setTextColor(255, 255, 255);
-  doc.text(labels.totalLabel, MARGIN + 4, y + 8.5);
-  doc.text(formatAmount(data.amount, currency, locale), PAGE_W - MARGIN - 4, y + 8.5, {
-    align: "right",
-  });
-
-  y += 22;
-
-  const footerNote = config.footerNote ?? labels.thankYouNote;
-  doc.setFont("helvetica", "italic");
-  doc.setFontSize(9);
-  doc.setTextColor(150, 150, 170);
-  doc.text(footerNote, PAGE_W / 2, y, { align: "center" });
-
-  // Barre de pied de page
-  doc.setFillColor(pr, pg, pb);
-  doc.rect(0, 287, PAGE_W, 10, "F");
-  if (config.appWebsite) {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(255, 255, 255);
-    doc.text(config.appWebsite, PAGE_W / 2, 293, { align: "center" });
-  }
-
-  const filename = resolveFilename(config, data);
+  const filename = rendered.filename ?? resolveFilename(config, data);
+  const dataUrl = rendered.dataUrl ?? (await blobToDataUrl(rendered.blob));
 
   if (config.autoDownload !== false) {
-    doc.save(`${filename}.pdf`);
+    triggerBlobDownload(rendered.blob, filename);
   }
 
-  const blob = doc.output("blob");
-  const dataUrl = doc.output("datauristring");
+  config.onGenerated?.(rendered.blob, dataUrl);
 
-  config.onGenerated?.(blob, dataUrl);
-
-  return { blob, dataUrl, filename };
+  return { blob: rendered.blob, dataUrl, filename };
 }

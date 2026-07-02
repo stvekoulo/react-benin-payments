@@ -58,10 +58,69 @@ function writeFile(filePath: string, content: string, overwrite = false) {
   return true;
 }
 
+/**
+ * Ce CLI ne suppose aucun framework particulier : il génère seulement un
+ * fichier d'environnement + un composant provider React, sans route API
+ * (chaque backend — Next.js, Express, un autre langage... — a sa propre
+ * façon d'exposer un endpoint). Le seul détail qui varie réellement d'un
+ * outil à l'autre est la convention de préfixe/accès aux variables
+ * d'environnement côté client.
+ */
+type EnvFlavorId = "next" | "vite" | "cra" | "none";
+
+interface EnvFlavor {
+  /** Short, easy-to-type key the user answers with (e.g. "next"). */
+  key: EnvFlavorId;
+  /** Human-readable name, shown next to the key in the prompt. */
+  description: string;
+  prefix: string;
+  /** Comment lire la variable dans le code (diffère selon le bundler). */
+  accessor: (varName: string) => string;
+  /** Next.js App Router exige "use client" sur les composants qui utilisent des hooks. */
+  useClientDirective: boolean;
+  mountingHint: string;
+}
+
+const ENV_FLAVORS: Record<EnvFlavorId, EnvFlavor> = {
+  next: {
+    key: "next",
+    description: "Next.js",
+    prefix: "NEXT_PUBLIC_",
+    accessor: (v) => `process.env.${v}`,
+    useClientDirective: true,
+    mountingHint: 'Importez-le dans `app/layout.tsx` et enveloppez `{children}` avec.',
+  },
+  vite: {
+    key: "vite",
+    description: "Vite",
+    prefix: "VITE_",
+    accessor: (v) => `import.meta.env.${v}`,
+    useClientDirective: false,
+    mountingHint: "Importez-le dans votre composant racine (`src/main.tsx` ou `src/App.tsx`).",
+  },
+  cra: {
+    key: "cra",
+    description: "Create React App",
+    prefix: "REACT_APP_",
+    accessor: (v) => `process.env.${v}`,
+    useClientDirective: false,
+    mountingHint: "Importez-le dans votre composant racine (`src/index.tsx` ou `src/App.tsx`).",
+  },
+  none: {
+    key: "none",
+    description: "autre / aucun préfixe particulier",
+    prefix: "",
+    accessor: (v) => `process.env.${v}`,
+    useClientDirective: false,
+    mountingHint: "Importez-le à l'endroit où vous montez votre arbre de composants racine.",
+  },
+};
+
 function generateEnvExample(
   useFeda: boolean,
   useKkia: boolean,
-  sandbox: boolean
+  sandbox: boolean,
+  flavor: EnvFlavor
 ): string {
   const lines: string[] = [
     "# react-benin-payments — généré par npx react-benin-payments init",
@@ -71,8 +130,8 @@ function generateEnvExample(
     lines.push("# FedaPay");
     lines.push(
       sandbox
-        ? "NEXT_PUBLIC_FEDAPAY_KEY=pk_sandbox_XXXXXXXXXXXXXXXX"
-        : "NEXT_PUBLIC_FEDAPAY_KEY=pk_live_XXXXXXXXXXXXXXXX"
+        ? `${flavor.prefix}FEDAPAY_KEY=pk_sandbox_XXXXXXXXXXXXXXXX`
+        : `${flavor.prefix}FEDAPAY_KEY=pk_live_XXXXXXXXXXXXXXXX`
     );
     lines.push("");
   }
@@ -80,61 +139,41 @@ function generateEnvExample(
     lines.push("# KKiaPay");
     lines.push(
       sandbox
-        ? "NEXT_PUBLIC_KKIAPAY_KEY=pk_test_XXXXXXXXXXXXXXXX"
-        : "NEXT_PUBLIC_KKIAPAY_KEY=pk_live_XXXXXXXXXXXXXXXX"
+        ? `${flavor.prefix}KKIAPAY_KEY=pk_test_XXXXXXXXXXXXXXXX`
+        : `${flavor.prefix}KKIAPAY_KEY=pk_live_XXXXXXXXXXXXXXXX`
     );
     lines.push("");
   }
-  lines.push(`NEXT_PUBLIC_PAYMENT_SANDBOX=${sandbox}`);
+  lines.push(`${flavor.prefix}PAYMENT_SANDBOX=${sandbox}`);
   return lines.join("\n");
 }
 
-function generateProviderTemplate(useFeda: boolean, useKkia: boolean): string {
-  return `"use client";
+function generateProviderTemplate(
+  useFeda: boolean,
+  useKkia: boolean,
+  flavor: EnvFlavor
+): string {
+  const directive = flavor.useClientDirective ? `"use client";\n\n` : "";
+  const fedaLine = useFeda
+    ? `      fedaPayPublicKey={${flavor.accessor(`${flavor.prefix}FEDAPAY_KEY`)}}\n`
+    : "";
+  const kkiaLine = useKkia
+    ? `      kkiaPayPublicKey={${flavor.accessor(`${flavor.prefix}KKIAPAY_KEY`)}}\n`
+    : "";
+  const sandboxExpr = `${flavor.accessor(`${flavor.prefix}PAYMENT_SANDBOX`)} === "true"`;
 
-import { BeninPaymentProvider } from "react-benin-payments";
+  return `${directive}import { BeninPaymentProvider } from "react-benin-payments";
+import type { ReactNode } from "react";
 
-export function PaymentProviders({ children }: { children: React.ReactNode }) {
+export function PaymentProviders({ children }: { children: ReactNode }) {
   return (
     <BeninPaymentProvider
-${useFeda ? `      fedaPayPublicKey={process.env.NEXT_PUBLIC_FEDAPAY_KEY}\n` : ""}${useKkia ? `      kkiaPayPublicKey={process.env.NEXT_PUBLIC_KKIAPAY_KEY}\n` : ""}      isTestMode={process.env.NEXT_PUBLIC_PAYMENT_SANDBOX === "true"}
+${fedaLine}${kkiaLine}      isTestMode={${sandboxExpr}}
       defaultCurrency="XOF"
     >
       {children}
     </BeninPaymentProvider>
   );
-}
-`;
-}
-
-function generateVerifyRoute(provider: "fedapay" | "kkiapay" | "both"): string {
-  const providerComment =
-    provider === "both"
-      ? "// Adaptez selon le provider (fedapay | kkiapay) reçu dans le body"
-      : `// Provider : ${provider}`;
-
-  return `import { NextRequest, NextResponse } from "next/server";
-
-${providerComment}
-export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const { transactionId, provider } = body;
-
-  if (!transactionId) {
-    return NextResponse.json({ error: "transactionId manquant" }, { status: 400 });
-  }
-
-  // TODO : vérifiez la transaction côté serveur avec l'API ${provider === "kkiapay" ? "KKiaPay" : "FedaPay"}
-  // Exemple FedaPay :
-  //   const res = await fetch(\`https://api.fedapay.com/v1/transactions/\${transactionId}\`, {
-  //     headers: { Authorization: \`Bearer \${process.env.FEDAPAY_SECRET_KEY}\` },
-  //   });
-  //   const data = await res.json();
-  //   if (data.v1_transaction?.status !== "approved") {
-  //     return NextResponse.json({ error: "Paiement non approuvé" }, { status: 400 });
-  //   }
-
-  return NextResponse.json({ success: true, transactionId });
 }
 `;
 }
@@ -173,51 +212,57 @@ async function main() {
     );
     const sandbox = sandboxChoice === "oui";
 
-    // 3. Générer la route de vérification
-    const withVerify =
-      (await askChoice(
+    // 3. Convention de variables d'environnement — le seul point qui diffère
+    // réellement d'un outil à l'autre (Next.js, Vite, CRA, ou rien de tout ça).
+    // Des clés courtes (next/vite/cra/none) plutôt que les noms complets,
+    // pour rester faciles à taper.
+    const flavorKeys = Object.keys(ENV_FLAVORS) as EnvFlavorId[];
+    const flavorChoiceStr = flavorKeys
+      .map((key) => {
+        const f = ENV_FLAVORS[key];
+        const entry = `${key}=${f.description}`;
+        return key === "next" ? `${BOLD}${entry}${RESET}` : entry;
+      })
+      .join(" / ");
+    const flavorAnswer = (
+      await ask(
         rl,
-        "Générer une route API de vérification Next.js ?",
-        ["oui", "non"],
-        "oui"
-      )) === "oui";
+        `Quel outil de build utilisez-vous (pour le préfixe des variables d'environnement) ? [${flavorChoiceStr}]: `
+      )
+    ).toLowerCase();
+    // Accepte aussi bien la clé courte ("cra") que le libellé affiché entre
+    // crochets ("create react app") — un utilisateur tape naturellement l'un
+    // ou l'autre, les deux doivent être reconnus plutôt que de retomber
+    // silencieusement sur Next.js.
+    const flavorId: EnvFlavorId =
+      flavorKeys.find(
+        (key) => key === flavorAnswer || ENV_FLAVORS[key].description.toLowerCase() === flavorAnswer
+      ) ?? "next";
+    const flavor = ENV_FLAVORS[flavorId];
 
     print("");
     info("Génération des fichiers...");
     print("");
 
-    // .env.local.example
-    writeFile(
-      ".env.local.example",
-      generateEnvExample(useFeda, useKkia, sandbox)
-    );
+    // .env.example
+    writeFile(".env.example", generateEnvExample(useFeda, useKkia, sandbox, flavor));
 
-    // providers.tsx
+    // Composant provider
     writeFile(
       "src/providers/payment.tsx",
-      generateProviderTemplate(useFeda, useKkia)
+      generateProviderTemplate(useFeda, useKkia, flavor)
     );
-
-    // Route de vérification
-    if (withVerify) {
-      const provider =
-        useFeda && useKkia ? "both" : useFeda ? "fedapay" : "kkiapay";
-      writeFile(
-        "src/app/api/verify-payment/route.ts",
-        generateVerifyRoute(provider as "fedapay" | "kkiapay" | "both")
-      );
-    }
 
     print("");
     print(`${BOLD}Prochaines étapes :${RESET}`);
-    print(`  1. Copiez ${CYAN}.env.local.example${RESET} → ${CYAN}.env.local${RESET} et renseignez vos clés`);
-    print(`  2. Importez ${CYAN}PaymentProviders${RESET} dans votre layout :`);
-    print(`     ${DIM}// app/layout.tsx${RESET}`);
-    print(`     ${DIM}import { PaymentProviders } from "@/providers/payment";${RESET}`);
+    print(`  1. Copiez ${CYAN}.env.example${RESET} → ${CYAN}.env${RESET} (ou ${CYAN}.env.local${RESET}) et renseignez vos clés`);
+    print(`  2. Importez ${CYAN}PaymentProviders${RESET} et enveloppez votre app avec :`);
+    print(`     ${DIM}${flavor.mountingHint}${RESET}`);
+    print(`     ${DIM}import { PaymentProviders } from "./providers/payment";${RESET}`);
     print(`     ${DIM}<PaymentProviders>{children}</PaymentProviders>${RESET}`);
-    if (withVerify) {
-      print(`  3. Complétez la logique dans ${CYAN}src/app/api/verify-payment/route.ts${RESET}`);
-    }
+    print(`  3. Ajoutez une vérification backend (indépendante du framework) —`);
+    print(`     voir la section "Vérification Backend" de la documentation :`);
+    print(`     ${CYAN}https://github.com/stvekoulo/react-benin-payments/blob/main/README.md#vérification-backend${RESET}`);
     print("");
     success("Configuration terminée !");
     print("");

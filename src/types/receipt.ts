@@ -1,4 +1,5 @@
 import type { Currency } from "./index";
+import type { PaymentProviderId } from "../core/types";
 
 /**
  * Données de transaction utilisées pour remplir le reçu.
@@ -24,8 +25,8 @@ export interface ReceiptTransactionData {
   serviceName?: string;
   /** Description détaillée */
   description?: string;
-  /** Provider de paiement utilisé */
-  provider?: "fedapay" | "kkiapay";
+  /** Provider de paiement utilisé — `"fedapay"` / `"kkiapay"`, ou l'identifiant d'un driver personnalisé */
+  provider?: PaymentProviderId;
   /** Métadonnées supplémentaires (non affichées, disponibles dans les callbacks) */
   metadata?: Record<string, unknown>;
 }
@@ -250,6 +251,32 @@ export interface ReceiptConfig {
    * Reçoit le Blob PDF et le data URL base64.
    */
   onGenerated?: (blob: Blob, dataUrl: string) => void;
+
+  /**
+   * Remplace entièrement le générateur PDF par défaut (jsPDF) par le vôtre.
+   *
+   * Utile si vous avez déjà votre propre template, une génération côté
+   * serveur, ou si vous préférez une autre librairie que jsPDF. Le reste de
+   * `usePaymentReceipt` (téléchargement, data URL, envoi par email) continue
+   * de fonctionner normalement à partir du `Blob` que vous retournez.
+   *
+   * Quand `renderPdf` est fourni, jsPDF n'est **jamais** chargé — vous n'avez
+   * donc pas besoin de l'installer.
+   *
+   * @example
+   * ```ts
+   * renderPdf: async (data) => {
+   *   const blob = await monGenerateurMaison(data);
+   *   return { blob, filename: `facture-${data.transactionId}` };
+   * }
+   * ```
+   */
+  renderPdf?: (
+    data: ReceiptTransactionData,
+    config: ReceiptConfig
+  ) =>
+    | Promise<{ blob: Blob; filename?: string }>
+    | { blob: Blob; filename?: string };
 
   /**
    * Configuration du service d'envoi d'email.

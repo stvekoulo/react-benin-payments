@@ -4,13 +4,16 @@ import { useState } from "react";
 import { useFedaPay, type UseFedaPayConfig, type UseFedaPayOptions } from "./useFedaPay";
 import { useKkiaPay, type UseKkiaPayConfig } from "./useKkiaPay";
 import type { FedaPayCallbackResponse, KkiaPaySuccessResponse, KkiaPayFailedResponse } from "../types";
-import type { PaymentValidationError } from "../types/validation";
+import type {
+  ErrorMessageResolver,
+  PaymentMessageOverrides,
+  PaymentValidationError,
+} from "../types/validation";
 import type { BeninPaymentAnalyticsHandler } from "../utils/analytics";
+import type { EnvironmentWarningMessages } from "../utils/keyValidator";
+import type { PaymentProvider } from "../core/types";
 
-/**
- * Supported payment providers.
- */
-export type PaymentProvider = "fedapay" | "kkiapay";
+export type { PaymentProvider };
 
 /**
  * Unified payment result from any provider.
@@ -64,6 +67,12 @@ export interface UseBeninPayOptions {
   onClose?: () => void;
   /** Callback on validation errors */
   onError?: (error: PaymentValidationError) => void;
+  /** Overrides the wording of validation error messages for this hook only. */
+  messages?: PaymentMessageOverrides;
+  /** Resolves the message for arbitrary caught errors (SDK load failures...) for this hook only. */
+  resolveErrorMessage?: ErrorMessageResolver;
+  /** Overrides the wording of dev-time console warnings for this hook only. */
+  environmentWarnings?: EnvironmentWarningMessages;
 }
 
 /**
@@ -152,6 +161,9 @@ export function useBeninPay(
     onFailed,
     onClose,
     onError,
+    messages,
+    resolveErrorMessage,
+    environmentWarnings,
   } = options;
   const [lastTransaction, setLastTransaction] =
     useState<UnifiedPaymentResult | null>(null);
@@ -165,6 +177,9 @@ export function useBeninPay(
     onBeforePayment,
     onAnalyticsEvent,
     onError,
+    messages,
+    resolveErrorMessage,
+    environmentWarnings,
   };
 
   // BUG FIX 2: Build a new config object with spread instead of mutating the
@@ -243,6 +258,9 @@ export function useBeninPay(
         }
       : undefined,
     onValidationError: onError,
+    messages,
+    resolveErrorMessage,
+    environmentWarnings,
   });
 
   if (provider === "fedapay") {

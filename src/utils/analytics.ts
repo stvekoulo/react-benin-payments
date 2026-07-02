@@ -1,4 +1,4 @@
-import type { PaymentProvider } from "../hooks/useBeninPay";
+import type { PaymentProviderId } from "../core/types";
 
 export type BeninPaymentAnalyticsEventName =
   | "sdk_load_started"
@@ -20,7 +20,8 @@ export type BeninPaymentAnalyticsEventName =
 
 export interface BeninPaymentAnalyticsEvent {
   name: BeninPaymentAnalyticsEventName;
-  provider: PaymentProvider;
+  /** `"fedapay"` / `"kkiapay"`, or a custom provider identifier for a driver you wrote yourself. */
+  provider: PaymentProviderId;
   amount?: number;
   currency?: string;
   mode: "mock" | "live";

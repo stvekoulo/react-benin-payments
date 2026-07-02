@@ -66,6 +66,23 @@ describe("useBeninConfig avec provider", () => {
 
     expect(result.current.isTestMode).toBe(false);
   });
+
+  it("transmet messages et resolveErrorMessage", () => {
+    const resolveErrorMessage = () => "erreur personnalisée";
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <BeninPaymentProvider
+        messages={{ INVALID_AMOUNT: "Montant incorrect." }}
+        resolveErrorMessage={resolveErrorMessage}
+      >
+        {children}
+      </BeninPaymentProvider>
+    );
+
+    const { result } = renderHook(() => useBeninConfig(), { wrapper });
+
+    expect(result.current.messages).toEqual({ INVALID_AMOUNT: "Montant incorrect." });
+    expect(result.current.resolveErrorMessage).toBe(resolveErrorMessage);
+  });
 });
 
 describe("useIsBeninProviderMounted", () => {

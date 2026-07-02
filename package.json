@@ -54,6 +54,16 @@
         "types": "./dist/kkiapay.d.ts",
         "default": "./dist/kkiapay.js"
       }
+    },
+    "./core": {
+      "import": {
+        "types": "./dist/core.d.mts",
+        "default": "./dist/core.mjs"
+      },
+      "require": {
+        "types": "./dist/core.d.ts",
+        "default": "./dist/core.js"
+      }
     }
   },
   "files": [
@@ -72,12 +82,15 @@
     "test:coverage": "vitest run --coverage",
     "prepublishOnly": "npm run build"
   },
-  "dependencies": {
-    "jspdf": "^2.5.2"
-  },
   "peerDependencies": {
     "react": ">=17.0.0",
-    "react-dom": ">=17.0.0"
+    "react-dom": ">=17.0.0",
+    "jspdf": "^2.5.2"
+  },
+  "peerDependenciesMeta": {
+    "jspdf": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
@@ -93,6 +106,7 @@
     "eslint-plugin-react": "^7.33.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "jsdom": "^29.0.1",
+    "jspdf": "^2.5.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "tsup": "^8.0.0",

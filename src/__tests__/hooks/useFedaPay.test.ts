@@ -392,4 +392,162 @@ describe("useFedaPay", () => {
       });
     });
   });
+
+  describe("contrôle des messages (i18n)", () => {
+    it("applique un message personnalisé via messages (option du hook)", () => {
+      const onError = vi.fn();
+      const { result } = renderHook(() =>
+        useFedaPay(
+          { transaction: { amount: 0 } },
+          { mock: true, onError, messages: { INVALID_AMOUNT: "Le montant doit être positif." } }
+        )
+      );
+
+      act(() => {
+        result.current.openDialog();
+      });
+
+      expect(onError).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "INVALID_AMOUNT", message: "Le montant doit être positif." })
+      );
+    });
+
+    it("hérite de messages configuré globalement via BeninPaymentProvider", () => {
+      const onError = vi.fn();
+      const wrapper = ({ children }: { children: React.ReactNode }) =>
+        React.createElement(
+          BeninPaymentProvider as React.ComponentType<{
+            messages: Record<string, string>;
+            children?: React.ReactNode;
+          }>,
+          { messages: { INVALID_AMOUNT: "Montant global invalide." } },
+          children
+        );
+
+      const { result } = renderHook(
+        () => useFedaPay({ transaction: { amount: 0 } }, { mock: true, onError }),
+        { wrapper }
+      );
+
+      act(() => {
+        result.current.openDialog();
+      });
+
+      expect(onError).toHaveBeenCalledWith(
+        expect.objectContaining({ message: "Montant global invalide." })
+      );
+    });
+
+    it("le message local (hook) prime sur le message global (provider)", () => {
+      const onError = vi.fn();
+      const wrapper = ({ children }: { children: React.ReactNode }) =>
+        React.createElement(
+          BeninPaymentProvider as React.ComponentType<{
+            messages: Record<string, string>;
+            children?: React.ReactNode;
+          }>,
+          { messages: { INVALID_AMOUNT: "Message global." } },
+          children
+        );
+
+      const { result } = renderHook(
+        () =>
+          useFedaPay(
+            { transaction: { amount: 0 } },
+            { mock: true, onError, messages: { INVALID_AMOUNT: "Message local." } }
+          ),
+        { wrapper }
+      );
+
+      act(() => {
+        result.current.openDialog();
+      });
+
+      expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: "Message local." }));
+    });
+
+    it("resolveErrorMessage personnalisé remplace la traduction par défaut", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({ ok: false, status: 500, json: () => Promise.resolve({}) })
+      );
+
+      const onError = vi.fn();
+      const resolveErrorMessage = vi.fn().mockReturnValue("Custom English error message.");
+      const { result } = renderHook(() =>
+        useFedaPay(
+          { transaction: { amount: 5000 }, verifyUrl: "/api/verify" },
+          { mock: true, onError, resolveErrorMessage }
+        )
+      );
+
+      await act(async () => {
+        result.current.openDialog();
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(resolveErrorMessage).toHaveBeenCalled();
+      expect(onError).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "SDK_ERROR", message: "Custom English error message." })
+      );
+    });
+
+    it("retombe sur la traduction par défaut si resolveErrorMessage retourne undefined", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({ ok: false, status: 500, json: () => Promise.resolve({}) })
+      );
+
+      const onError = vi.fn();
+      const { result } = renderHook(() =>
+        useFedaPay(
+          { transaction: { amount: 5000 }, verifyUrl: "/api/verify" },
+          { mock: true, onError, resolveErrorMessage: () => undefined }
+        )
+      );
+
+      await act(async () => {
+        result.current.openDialog();
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(onError).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "SDK_ERROR",
+          message: "Erreur serveur. Veuillez réessayer.",
+        })
+      );
+    });
+
+    it("ne retraduit jamais un message d'erreur renvoyé par le backend du marchand, même s'il ressemble à un message technique générique", async () => {
+      const backendMessage = "Stock indisponible (network 500)";
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 400,
+          json: () => Promise.resolve({ message: backendMessage }),
+        })
+      );
+
+      const onError = vi.fn();
+      const { result } = renderHook(() =>
+        useFedaPay(
+          { transaction: { amount: 5000 }, verifyUrl: "/api/verify" },
+          { mock: true, onError }
+        )
+      );
+
+      await act(async () => {
+        result.current.openDialog();
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      // Sans la protection, "network 500" matcherait DEFAULT_ERROR_PATTERNS
+      // et écraserait silencieusement le message écrit par le marchand.
+      expect(onError).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "SDK_ERROR", message: backendMessage })
+      );
+    });
+  });
 });

@@ -1,6 +1,6 @@
 # react-benin-payments
 
-![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Size](https://img.shields.io/badge/size-27.4kb-brightgreen.svg)
 ![TypeScript](https://img.shields.io/badge/TypeScript-Ready-3178c6.svg)
@@ -24,38 +24,15 @@ Gère automatiquement le chargement des scripts, les modales de paiement et la v
 - **Mock Mode** — Simulez des paiements en développement
 - **Hook Universel** — `useBeninPay` pour changer de provider dynamiquement
 - **Reçus PDF** — `usePaymentReceipt` génère des reçus PDF entièrement personnalisables et les envoie par email
-- **Messages d'erreur localisés** — UX optimisée pour les utilisateurs francophones
+- **Messages 100% personnalisables** — traductions françaises par défaut, mais entièrement remplaçables (`messages`, `resolveErrorMessage`) pour cibler n'importe quelle langue
+- **Extensible** — `react-benin-payments/core` permet de brancher n'importe quel autre provider (CinetPay, PayDunya, Stripe...) avec le même moteur
+- **CLI générique** — `npx react-benin-payments init` s'adapte à Next.js, Vite, Create React App ou tout autre setup
 
 ---
 
 ## Mises à jour récentes
 
-### Bugs déjà corrigés dans le projet
-
-- `🐛 Bug 1 — Double chargement des SDKs`
-- `🐛 Bug 2 — Mutation directe de l'objet config (useBeninPay.ts)`
-- `🐛 Bug 3 — Boucle infinie de listeners KKiaPay (useKkiaPay.ts)`
-
-### Bugs corrigés dans cette mise à jour
-
-- Correction du loader de script pour éviter un faux positif quand le script existe déjà mais n'est pas encore chargé
-- Correction de `usePaymentStatus` pour arrêter proprement après `maxAttempts`, y compris en cas d'erreurs réseau répétées
-- Correction de `usePaymentHistory` pour recharger correctement l'historique quand `storage` ou `storageKey` changent
-- Correction des callbacks de `useBeninPay` pour ne plus écraser silencieusement les callbacks FedaPay existants
-- Transmission correcte de la configuration de vérification KKiaPay dans le hook unifié
-- Harmonisation de la doc et des types FedaPay pour éviter les incohérences d'intégration
-
-### Nouvelles fonctionnalités
-
-- `usePaymentHistory` — Historique des paiements en mémoire, session ou localStorage
-- `<PaymentStatusBadge />` — Composant visuel pour afficher le statut d'un paiement
-- `onBeforePayment` — Pré-validation asynchrone avant ouverture du widget
-- `useBeninPay.lastTransaction` — Dernière transaction réussie exposée directement
-- `Événements Analytics` — Événements standardisés compatibles PostHog, Mixpanel, etc.
-- `Améliorations Architecturales` — sous-entrées `fedapay` / `kkiapay` pour un meilleur tree-shaking
-- `React 19 / RSC` — marqueurs `"use client"` explicites sur les modules React exposés
-- `usePaymentStatus` — support WebSocket en plus du polling
-- `usePaymentReceipt` — génération de reçus PDF avec design personnalisable (logo, couleurs, numérotation) et envoi automatique par email
+L'historique complet des versions (ajouts, corrections, changements) vit désormais dans **[CHANGELOG.md](./CHANGELOG.md)**.
 
 ---
 
@@ -155,6 +132,8 @@ yarn add react-benin-payments
 
 **Peer Dependencies :** `react >= 17.0.0`, `react-dom >= 17.0.0`
 
+**Peer dependency optionnelle :** `jspdf` — uniquement nécessaire si vous utilisez `usePaymentReceipt` sans fournir votre propre `renderPdf` (voir [Génération de reçus PDF](./DOCUMENTATION.md#génération-de-reçus-pdf)). `npm install jspdf` si besoin ; le reste du package fonctionne sans.
+
 ### Imports séparés pour un meilleur tree-shaking
 
 Si vous n'utilisez qu'un seul provider, vous pouvez importer uniquement son entrypoint dédié:
@@ -168,6 +147,15 @@ import { KkiaPayButton, useKkiaPay } from "react-benin-payments/kkiapay";
 ```
 
 L'entrée racine `react-benin-payments` reste disponible pour les usages mixtes ou pour `useBeninPay`.
+
+### Brancher un autre provider (CinetPay, PayDunya, Stripe...)
+
+`useFedaPay` et `useKkiaPay` reposent tous les deux sur le même moteur de paiement, exposé séparément et sans dépendance à FedaPay/KKiaPay via `react-benin-payments/core`. Utile dans un e-commerce, une app SaaS ou une plateforme de dons qui a besoin d'un prestataire non fourni par ce package — voir [Créer un provider personnalisé](./DOCUMENTATION.md#créer-un-provider-personnalisé).
+
+```tsx
+import { createPaymentEngine, usePaymentEngine } from "react-benin-payments/core";
+import type { PaymentDriver } from "react-benin-payments/core";
+```
 
 ---
 

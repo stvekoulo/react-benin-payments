@@ -74,7 +74,10 @@ export { generateReceiptPdf } from "./utils/generateReceipt";
 export type {
   ValidationErrorCode,
   PaymentValidationError,
+  PaymentMessageOverrides,
+  ErrorMessageResolver,
 } from "./types/validation";
+export type { EnvironmentWarningMessages } from "./utils/keyValidator";
 export type {
   BeninPaymentAnalyticsEventName,
   BeninPaymentAnalyticsEvent,
@@ -127,4 +130,5 @@ export type {
 
 // Utilities
 export { formatXOF, formatCurrency, generateMockTransactionId } from "./utils/currency";
-export { parseError, createParsedError } from "./utils/errors";
+export { parseError, createParsedError, DEFAULT_ERROR_PATTERNS } from "./utils/errors";
+export type { ErrorPattern, ParseErrorOptions } from "./utils/errors";

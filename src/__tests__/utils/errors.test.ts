@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseError, createParsedError } from "../../utils/errors";
+import { parseError, createParsedError, DEFAULT_ERROR_PATTERNS } from "../../utils/errors";
 
 describe("parseError", () => {
   it("retourne le message par défaut pour null", () => {
@@ -91,5 +91,39 @@ describe("createParsedError", () => {
   it("gère un Error object en entrée", () => {
     const err = createParsedError(new Error("timeout"));
     expect(err.message).toBe("La requête a expiré. Veuillez réessayer.");
+  });
+});
+
+describe("parseError avec contrôle total (i18n)", () => {
+  it("accepte des patterns personnalisés à la place des valeurs par défaut", () => {
+    const result = parseError("network failed", {
+      patterns: [{ pattern: /network/i, message: "No internet connection." }],
+    });
+
+    expect(result).toBe("No internet connection.");
+  });
+
+  it("permet d'étendre DEFAULT_ERROR_PATTERNS plutôt que de tout réécrire", () => {
+    const result = parseError("insufficient funds", {
+      patterns: [
+        { pattern: /custom-case/i, message: "Cas particulier." },
+        ...DEFAULT_ERROR_PATTERNS,
+      ],
+    });
+
+    expect(result).toBe("Solde insuffisant sur votre compte.");
+  });
+
+  it("accepte un fallbackMessage personnalisé", () => {
+    const result = parseError(null, { fallbackMessage: "Unknown error." });
+    expect(result).toBe("Unknown error.");
+  });
+
+  it("createParsedError transmet les options à parseError", () => {
+    const err = createParsedError("network failed", {
+      patterns: [{ pattern: /network/i, message: "No internet connection." }],
+    });
+
+    expect(err.message).toBe("No internet connection.");
   });
 });

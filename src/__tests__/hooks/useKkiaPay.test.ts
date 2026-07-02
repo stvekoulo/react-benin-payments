@@ -287,4 +287,51 @@ describe("useKkiaPay", () => {
       );
     });
   });
+
+  describe("contrôle des messages (i18n)", () => {
+    it("applique un message personnalisé via messages", () => {
+      const onValidationError = vi.fn();
+      const { result } = renderHook(() =>
+        useKkiaPay({
+          mock: true,
+          onValidationError,
+          messages: { INVALID_AMOUNT: "Montant KKiaPay invalide." },
+        })
+      );
+
+      act(() => {
+        result.current.openKkiapay({ amount: 0 });
+      });
+
+      expect(onValidationError).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "INVALID_AMOUNT", message: "Montant KKiaPay invalide." })
+      );
+    });
+
+    it("resolveErrorMessage personnalisé remplace la traduction par défaut", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({ ok: false, status: 500, json: () => Promise.resolve({}) })
+      );
+
+      const onValidationError = vi.fn();
+      const { result } = renderHook(() =>
+        useKkiaPay({
+          mock: true,
+          verifyUrl: "/api/verify",
+          onValidationError,
+          resolveErrorMessage: () => "Custom message.",
+        })
+      );
+
+      await act(async () => {
+        result.current.openKkiapay({ amount: 5000 });
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(onValidationError).toHaveBeenCalledWith(
+        expect.objectContaining({ code: "SDK_ERROR", message: "Custom message." })
+      );
+    });
+  });
 });

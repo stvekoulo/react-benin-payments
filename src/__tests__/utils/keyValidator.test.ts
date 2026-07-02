@@ -55,6 +55,13 @@ describe("validateKeyEnvironment", () => {
       expect.stringContaining("KKiaPay")
     );
   });
+
+  it("utilise le message personnalisé fourni au lieu du texte anglais par défaut", () => {
+    validateKeyEnvironment("pk_live_xxxx", true, "FedaPay", {
+      liveKeyInSandbox: (provider) => `Clé live détectée en sandbox pour ${provider}.`,
+    });
+    expect(console.warn).toHaveBeenCalledWith("Clé live détectée en sandbox pour FedaPay.");
+  });
 });
 
 describe("logSandboxMode", () => {
@@ -76,5 +83,12 @@ describe("logSandboxMode", () => {
   it("ne logue pas quand sandbox est false", () => {
     logSandboxMode(false, "FedaPay");
     expect(console.log).not.toHaveBeenCalled();
+  });
+
+  it("utilise le message personnalisé fourni au lieu du texte anglais par défaut", () => {
+    logSandboxMode(true, "KKiaPay", {
+      sandboxModeActive: (provider) => `${provider} est en mode bac à sable.`,
+    });
+    expect(console.log).toHaveBeenCalledWith("KKiaPay est en mode bac à sable.");
   });
 });

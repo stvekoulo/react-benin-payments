@@ -13,11 +13,12 @@ Guide complet pour intégrer les paiements FedaPay et KKiaPay dans vos applicati
 5. [Utilisation de base](#utilisation-de-base)
 6. [Utilisation avancée](#utilisation-avancée)
 7. [Génération de reçus PDF](#génération-de-reçus-pdf)
-8. [Référence API](#référence-api)
-9. [Utilitaires](#utilitaires)
-10. [Gestion des erreurs](#gestion-des-erreurs)
-11. [Mode Test et Production](#mode-test-et-production)
-12. [FAQ](#faq)
+8. [Créer un provider personnalisé](#créer-un-provider-personnalisé)
+9. [Référence API](#référence-api)
+10. [Utilitaires](#utilitaires)
+11. [Gestion des erreurs](#gestion-des-erreurs)
+12. [Mode Test et Production](#mode-test-et-production)
+13. [FAQ](#faq)
 
 ---
 
@@ -50,32 +51,7 @@ Guide complet pour intégrer les paiements FedaPay et KKiaPay dans vos applicati
 
 ## Nouveautés et corrections
 
-### Bugs déjà corrigés dans le projet
-
-- `🐛 Bug 1 — Double chargement des SDKs`
-- `🐛 Bug 2 — Mutation directe de l'objet config (useBeninPay.ts)`
-- `🐛 Bug 3 — Boucle infinie de listeners KKiaPay (useKkiaPay.ts)`
-
-### Bugs corrigés dans cette mise à jour
-
-- Le loader de scripts gère maintenant correctement le cas où un SDK est déjà présent dans le DOM mais pas encore chargé
-- `usePaymentStatus` arrête désormais proprement le suivi après `maxAttempts`, même en cas d'erreurs backend répétées
-- `usePaymentHistory` recharge bien les données si `storage` ou `storageKey` changent
-- `useBeninPay` ne remplace plus silencieusement certains callbacks FedaPay existants
-- La configuration de vérification KKiaPay est correctement transmise par le hook universel
-- Les signatures et exemples FedaPay ont été harmonisés entre la doc et le code
-
-### Nouvelles fonctionnalités
-
-- `usePaymentHistory` pour conserver un historique de paiement en mémoire, session ou localStorage
-- `<PaymentStatusBadge />` pour afficher un statut visuel prêt à l'emploi
-- `onBeforePayment` pour exécuter une logique asynchrone avant l'ouverture du paiement
-- `useBeninPay.lastTransaction` pour récupérer la dernière transaction réussie sans `useState` supplémentaire
-- `Événements Analytics` standardisés pour PostHog, Mixpanel ou un tracker maison
-- `Imports séparés` via `react-benin-payments/fedapay` et `react-benin-payments/kkiapay`
-- Compatibilité renforcée `React 19 / React Server Components` avec marqueurs `"use client"`
-- `usePaymentStatus` avec support `WebSocket` en plus du polling
-- `usePaymentReceipt` — génération de reçus PDF entièrement personnalisables avec envoi automatique par email
+L'historique détaillé des versions (ajouts, corrections, changements) vit dans **[CHANGELOG.md](./CHANGELOG.md)**.
 
 ---
 
@@ -120,6 +96,16 @@ import { BeninPaymentProvider, FedaPayButton } from "react-benin-payments";
 
 // Si pas d'erreur, l'installation est réussie
 ```
+
+### Configuration rapide via CLI
+
+Un assistant en ligne de commande peut générer le fichier d'environnement et le composant provider pour vous :
+
+```bash
+npx react-benin-payments init
+```
+
+Il vous demande : le(s) provider(s) à utiliser, le mode sandbox, et l'outil de build de votre projet (Next.js, Vite, Create React App, ou aucun préfixe particulier) — pour générer un `.env.example` et un composant `PaymentProviders` avec la bonne convention de variables d'environnement (`NEXT_PUBLIC_`, `VITE_`, `REACT_APP_`...). Il ne génère **pas** de route API : la vérification backend dépend de votre framework serveur, voir [Vérification Backend](./README.md#vérification-backend).
 
 ---
 
@@ -778,7 +764,9 @@ En mode mock :
 
 ## Génération de reçus PDF
 
-Le hook `usePaymentReceipt` génère des reçus PDF professionnels directement dans le navigateur (côté client, sans serveur) à l'aide de [jsPDF](https://github.com/parallax/jsPDF). Le design, les textes et la numérotation sont entièrement contrôlés par votre configuration.
+Le hook `usePaymentReceipt` génère des reçus PDF directement dans le navigateur (côté client, sans serveur), avec un design minimaliste par défaut (une fine bande de couleur, des séparateurs discrets, une hiérarchie typographique claire). Le design, les textes et la numérotation sont entièrement contrôlés par votre configuration, et le générateur par défaut peut être remplacé par le vôtre via `renderPdf`.
+
+Le générateur par défaut s'appuie sur [jsPDF](https://github.com/parallax/jsPDF), chargé **à la demande** — jsPDF est une *peer dependency optionnelle* : `npm install jspdf` seulement si vous utilisez `usePaymentReceipt` sans fournir `renderPdf`. Les projets qui n'utilisent que `useFedaPay`/`useKkiaPay` n'installent jamais jsPDF.
 
 ### Cas d'usage courants
 
@@ -1034,6 +1022,22 @@ const { generateBlob } = usePaymentReceipt({
 });
 ```
 
+### Remplacer le PDF par défaut (`renderPdf`)
+
+Si vous avez déjà votre propre template (une autre librairie que jsPDF, une génération côté serveur, un design maison), fournissez `renderPdf` : il remplace entièrement le générateur par défaut, et jsPDF n'est alors **jamais chargé**. Le reste de `usePaymentReceipt` (téléchargement, data URL, envoi par email) continue de fonctionner à l'identique à partir du `Blob` que vous retournez.
+
+```tsx
+const { generateAndDownload, sendByEmail } = usePaymentReceipt({
+  renderPdf: async (data) => {
+    // Votre propre génération — une autre librairie, un appel serveur, etc.
+    const blob = await monGenerateurDeFactureMaison(data);
+    return { blob, filename: `facture-${data.transactionId}` };
+  },
+});
+```
+
+`renderPdf` peut être synchrone ou asynchrone. Si vous omettez `filename`, la même résolution que le générateur par défaut s'applique (`config.filename`, sinon `recu-${transactionId}`).
+
 ### Intégration complète avec useBeninPay
 
 ```tsx
@@ -1094,6 +1098,119 @@ function FullCheckout() {
   );
 }
 ```
+
+---
+
+## Créer un provider personnalisé
+
+`useFedaPay` et `useKkiaPay` sont tous les deux de fines couches React posées sur le **même moteur de paiement**, qui n'a lui-même aucune dépendance à FedaPay, KKiaPay, ni même à React. Ce moteur est exposé séparément via `react-benin-payments/core`, pour brancher **n'importe quel prestataire de paiement** que le package ne fournit pas — CinetPay, PayDunya, Stripe, MTN MoMo direct, la passerelle interne d'une banque — dans n'importe quel type de projet (e-commerce, SaaS, plateforme de dons, marketplace...).
+
+En implémentant un `PaymentDriver`, vous obtenez gratuitement : chargement de script, mode mock, `onBeforePayment`, vérification backend et événements analytics standardisés — exactement la même mécanique que `useFedaPay`/`useKkiaPay`.
+
+### 1. Écrire le driver
+
+Un driver décrit uniquement ce qui est spécifique au provider : comment valider sa config, simuler un paiement en mode mock, et ouvrir son widget/SDK.
+
+```ts
+// monpay-driver.ts
+import type { PaymentDriver } from "react-benin-payments/core";
+import { generateMockTransactionId } from "react-benin-payments/core";
+
+interface MonPayConfig {
+  apiKey: string;
+  amount: number;
+  customerEmail?: string;
+}
+
+interface MonPaySuccess {
+  reference: string;
+  amount: number;
+}
+
+export function createMonPayDriver(): PaymentDriver<MonPayConfig, MonPaySuccess> {
+  return {
+    name: "monpay",
+    scriptUrl: "https://cdn.monpay.example/sdk.js",
+    scriptId: "monpay-sdk-script",
+
+    isSdkReady: () => typeof window !== "undefined" && !!window.MonPay,
+
+    validate: (config) => {
+      if (!config.apiKey) return { code: "MISSING_PUBLIC_KEY", message: "Clé API MonPay manquante." };
+      if (!config.amount || config.amount <= 0) return { code: "INVALID_AMOUNT", message: "Montant invalide." };
+      return null;
+    },
+
+    getAmount: (config) => config?.amount,
+
+    buildMockSuccess: (config) => ({
+      reference: generateMockTransactionId(),
+      amount: config.amount,
+    }),
+
+    toVerifyPayload: (raw) => ({ transactionId: raw.reference, amount: raw.amount }),
+
+    open: (config, handlers) => {
+      window.MonPay!.checkout({
+        apiKey: config.apiKey,
+        amount: config.amount,
+        email: config.customerEmail,
+        onSuccess: (data: MonPaySuccess) => handlers.onSuccess(data),
+        onCancel: () => handlers.onClose(),
+      });
+    },
+  };
+}
+```
+
+### 2. L'utiliser dans un hook React
+
+```tsx
+"use client";
+
+import { usePaymentEngine } from "react-benin-payments/core";
+import { createMonPayDriver } from "./monpay-driver";
+
+const monPayDriver = createMonPayDriver();
+
+export function useMonPay(config: { apiKey: string; amount: number }, options: { onSuccess?: (r: unknown) => void } = {}) {
+  const [state, open] = usePaymentEngine(monPayDriver, () => ({
+    isMockMode: process.env.NODE_ENV === "test",
+    onRawSuccess: options.onSuccess,
+  }));
+
+  return { ...state, pay: () => open(config) };
+}
+```
+
+`useMonPay` se comporte alors exactement comme `useFedaPay` : `loading`, `scriptLoaded`, `isVerifying`, `isPreparing`, mode mock automatique en test, et les mêmes événements analytics (`payment_opened`, `payment_completed`, `payment_failed`...) avec `provider: "monpay"` — utilisable côté e-commerce (checkout), SaaS (page de facturation) ou don (formulaire de don) sans rien réécrire.
+
+### Utilisation sans React
+
+`createPaymentEngine` n'a aucune dépendance à React — il expose `subscribe`/`getState`/`open` bruts, utilisables depuis n'importe quelle couche UI (Vue, Svelte, vanilla JS) :
+
+```ts
+import { createPaymentEngine } from "react-benin-payments/core";
+import { createMonPayDriver } from "./monpay-driver";
+
+const engine = createPaymentEngine(createMonPayDriver(), () => ({
+  isMockMode: false,
+  onRawSuccess: (data) => console.log("Payé !", data),
+}));
+
+engine.start();
+engine.subscribe(() => console.log("État :", engine.getState()));
+engine.open({ apiKey: "sk_xxx", amount: 5000 });
+```
+
+### Ce qui est exporté par `react-benin-payments/core`
+
+| Export | Rôle |
+| --- | --- |
+| `createPaymentEngine(driver, getOptions)` | Le moteur framework-agnostic |
+| `usePaymentEngine(driver, getOptions)` | Binding React (utilisé en interne par `useFedaPay`/`useKkiaPay`) |
+| `PaymentDriver<TConfig, TRaw>` | Le contrat à implémenter pour un nouveau provider |
+| `loadScript`, `createLogger`, `verifyTransaction`, `validateKeyEnvironment`, `logSandboxMode`, `generateMockTransactionId` | Briques utilitaires internes, réutilisables pour écrire un driver |
 
 ---
 
@@ -1663,6 +1780,57 @@ if (error) {
 }
 ```
 
+### Contrôler la langue et le texte des messages
+
+Les codes d'erreur ci-dessus sont fixes, mais **le texte n'est jamais imposé** : vous avez un contrôle total, à deux niveaux.
+
+**1. `messages` — reformule les messages de validation, par code**
+
+```tsx
+// Globalement, pour tous les hooks
+<BeninPaymentProvider
+  messages={{
+    MISSING_PUBLIC_KEY: "API key is missing.",
+    INVALID_AMOUNT: "Amount must be greater than 0.",
+  }}
+>
+
+// Ou juste pour un hook
+useFedaPay(config, {
+  messages: { INVALID_AMOUNT: "Le montant est incorrect." }, // prime sur le provider
+});
+```
+
+**2. `resolveErrorMessage` — reformule les erreurs techniques imprévues** (échec de chargement du SDK, erreur réseau lors de la vérification backend...). Retournez `undefined` pour laisser passer au résolveur suivant (local → global → traduction française par défaut) :
+
+```tsx
+<BeninPaymentProvider
+  resolveErrorMessage={(error) => {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (/network|offline/i.test(msg)) return "No internet connection.";
+    return undefined; // les autres cas gardent la traduction par défaut
+  }}
+>
+```
+
+**3. `parseError` / `createParsedError` — contrôle total quand vous les appelez vous-même**, avec vos propres patterns au lieu des traductions françaises intégrées :
+
+```tsx
+import { parseError, DEFAULT_ERROR_PATTERNS } from "react-benin-payments";
+
+// Remplacement complet
+parseError(err, {
+  patterns: [
+    { pattern: /closed|dismissed|cancel/i, message: "Payment cancelled." },
+    { pattern: /network|offline/i, message: "No internet connection." },
+  ],
+  fallbackMessage: "Something went wrong.",
+});
+
+// Ou extension : vos règles d'abord, puis les traductions par défaut
+parseError(err, { patterns: [...myPatterns, ...DEFAULT_ERROR_PATTERNS] });
+```
+
 ---
 
 ## Mode Test et Production
@@ -1766,18 +1934,18 @@ Les webhooks sont gérés côté serveur, indépendamment de cette librairie. Co
 
 ### Le reçu PDF peut-il être généré côté serveur ?
 
-`usePaymentReceipt` est un hook React qui s'exécute côté client (navigateur). Si vous souhaitez générer le PDF côté serveur, utilisez directement la fonction utilitaire `generateReceiptPdf` :
+`usePaymentReceipt` est un hook React pensé pour le client, mais la fonction utilitaire sous-jacente `generateReceiptPdf` s'utilise directement, y compris côté serveur — passez `autoDownload: false` pour éviter tout appel à des API navigateur :
 
 ```typescript
 import { generateReceiptPdf } from "react-benin-payments";
 
 const { blob, dataUrl, filename } = await generateReceiptPdf(
   { transactionId: "TXN-123", amount: 5000 },
-  { appName: "MonShop" }
+  { appName: "MonShop", autoDownload: false }
 );
 ```
 
-Notez que jsPDF est une librairie browser-first. Pour une génération serveur robuste, envisagez `@react-pdf/renderer` ou Puppeteer.
+Le générateur par défaut (jsPDF) fonctionne ainsi en Node. Pour un rendu plus riche (mise en page HTML/CSS via `@react-pdf/renderer`, Puppeteer, un template maison...), fournissez `renderPdf` — voir [Remplacer le PDF par défaut](#remplacer-le-pdf-par-défaut-renderpdf).
 
 ### Le logo du reçu ne s'affiche pas
 

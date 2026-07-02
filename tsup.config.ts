@@ -10,6 +10,8 @@ const addUseClient = () => {
     "dist/fedapay.mjs",
     "dist/kkiapay.js",
     "dist/kkiapay.mjs",
+    "dist/core.js",
+    "dist/core.mjs",
   ];
   files.forEach((file) => {
     const filePath = resolve(file);
@@ -26,7 +28,12 @@ const addUseClient = () => {
 
 export default defineConfig([
   {
-    entry: ["src/index.ts", "src/fedapay.ts", "src/kkiapay.ts"],
+    entry: {
+      index: "src/index.ts",
+      fedapay: "src/fedapay.ts",
+      kkiapay: "src/kkiapay.ts",
+      core: "src/core/index.ts",
+    },
     format: ["cjs", "esm"],
     dts: true,
     splitting: false,
@@ -34,7 +41,7 @@ export default defineConfig([
     clean: true,
     treeshake: true,
     minify: false,
-    external: ["react", "react-dom"],
+    external: ["react", "react-dom", "jspdf"],
     onSuccess: async () => {
       addUseClient();
       console.log("Added 'use client' directive to output files");
