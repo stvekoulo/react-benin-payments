@@ -4,7 +4,7 @@ Tous les changements notables de ce projet sont documentés ici.
 
 Le format suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/), et ce projet adhère au [Semantic Versioning](https://semver.org/lang/fr/).
 
-## [Non publié]
+## [2.0.2] - 2026-07-03
 
 ### Ajouté
 
